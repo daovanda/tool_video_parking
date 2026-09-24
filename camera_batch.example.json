@@ -1,0 +1,52 @@
+{
+  "runs": [
+    {
+      "camera": {
+        "camera_id": "CAM_ENTRY_01",
+        "lane_id": "ENTRY_01",
+        "direction": "ENTRY",
+        "roi": [],
+        "crossing_line": []
+      },
+      "source": "video_test1.mp4",
+      "output_dir": "outputs\\batch",
+      "model": "yolo26s.pt",
+      "image_size": 320,
+      "sample_fps": 0.5,
+      "confidence": 0.12,
+      "candidate_hits": 2,
+      "min_motion_distance": 0.015,
+      "motion_window_seconds": 1.5,
+      "line_gate_margin": 0.12,
+      "grace_seconds": 1.5,
+      "pre_seconds": 1.5,
+      "post_seconds": 2.0,
+      "merge_gap_seconds": 0.5,
+      "make_clips": false
+    },
+    {
+      "camera": {
+        "camera_id": "CAM_EXIT_01",
+        "lane_id": "EXIT_01",
+        "direction": "EXIT",
+        "roi": [],
+        "crossing_line": []
+      },
+      "source": "video_test1.mp4",
+      "output_dir": "outputs\\batch",
+      "model": "yolo26s.pt",
+      "image_size": 320,
+      "sample_fps": 0.5,
+      "confidence": 0.12,
+      "candidate_hits": 2,
+      "min_motion_distance": 0.015,
+      "motion_window_seconds": 1.5,
+      "line_gate_margin": 0.12,
+      "grace_seconds": 1.5,
+      "pre_seconds": 1.5,
+      "post_seconds": 2.0,
+      "merge_gap_seconds": 0.5,
+      "make_clips": false
+    }
+  ]
+}

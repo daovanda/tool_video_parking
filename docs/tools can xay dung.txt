@@ -1,0 +1,17 @@
+Flow tool:
+Bước1: Raw video => model1 => cắt và giữ lại những đoạn có xe qua lại => pre video (đánh giá model1 bằng các metric)
+Bước2: pre video => model2 (của bên dev) => so sánh với ground truth => đánh giá các metric => report
+
+
+Mục tiêu là đánh giá mô hình của bên dev cung cấp
+
+
+Ghi chú ban đầu: ở bước 1 model1 và ground truth chưa có nên cần tự xây cách
+cắt đúng và tự tạo ground truth. Hiện repository đã có baseline Model 1
+(YOLO26s + ByteTrack + EventEngine), GUI/CLI và GT event tối giản; xem
+`trang_thai_trien_khai.md` để biết phần đã chạy được và phần còn thiếu.
+
+Ở bước 2 đã có model và ground truth của bên dev; mục tiêu vẫn là đánh giá mô
+hình đó xem nó yếu ở đâu, ví dụ sai ký tự nào, biển bẩn/chói hay điều kiện
+ánh sáng. OCR, CER và báo cáo lỗi Bước 2 chưa nằm trong pilot hiện tại.
+		

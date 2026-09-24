@@ -1,0 +1,6 @@
+-r requirements.txt
+# PaddleX 3.7 requires NumPy < 2.4 on Python 3.12.
+numpy<2.4
+scikit-image>=0.26
+paddlepaddle>=3.0
+paddleocr>=3.0

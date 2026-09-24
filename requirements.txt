@@ -1,0 +1,10 @@
+opencv-python>=4.7
+numpy>=1.23
+scipy>=1.9
+PyQt6>=6.5
+ultralytics>=8.4
+lap>=0.5.12
+fastapi>=0.115
+uvicorn>=0.34
+openpyxl>=3.1
+Pillow>=10
