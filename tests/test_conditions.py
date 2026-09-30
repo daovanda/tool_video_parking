@@ -37,6 +37,12 @@ class ConditionTests(unittest.TestCase):
             self.assertEqual(record["condition_status"], "not_applicable")
             self.assertIsNone(record["plate_readable"])
             self.assertIsNone(record["vlm_result"])
+            run = json.loads((root / "run.json").read_text())
+            run["schema_version"] = "0.10.0"
+            (root / "run.json").write_text(json.dumps(run))
+            run_condition_analysis(root, config)
+            self.assertEqual(json.loads((root / "run.json").read_text())["schema_version"],
+                             "0.10.0")
 
     def test_tensorflow_backend_is_disabled_before_optional_models_load(self):
         self.assertEqual(os.environ.get("USE_TF"), "0")

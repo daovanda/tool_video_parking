@@ -1,9 +1,25 @@
 # Định dạng đầu ra chuẩn sau bước 1
 
-## Thời gian xử lý run (artifact `runtime.json` schema `0.3.0`)
+## MOG2 gate và tương thích schema (writer từ 29/09/2026)
+
+Run/event/clip mới ghi `schema_version: "0.10.0"` (trước đó `0.9.0`).
+`run.json.config` có sáu trường `motion_gate_*` trong `RunConfig`;
+`run.json` thêm `detector_frames` và `motion_gate` gồm `enabled`,
+`skipped_frames`, `fallback_error`. `sampled_frames` vẫn là số frame ở nhịp
+lấy mẫu, có thể lớn hơn `detector_frames`. Mỗi dòng `detections.jsonl` của
+frame lấy mẫu có `detector_skipped: boolean`; nếu `true`, `detections=[]`
+nghĩa là YOLO **không được gọi**, không phải kết quả âm tính của YOLO.
+`runtime.json` tăng từ `0.3.0` lên `0.4.0`, thêm
+`core_profile_seconds.motion_gate_seconds` (bao gồm resize/mask/MOG2).
+Các field cũ, timeline raw, clip và GT không đổi. Reader của run cũ thiếu
+`detector_skipped` phải coi là `false`; thiếu `detector_frames` có thể dùng
+`sampled_frames`, nhưng không được suy ra MOG2 đã bật. `RunConfig.from_dict`
+nhận cấu hình cũ và đặt MOG2 tắt theo mặc định; không phải migrate file cũ.
+
+## Thời gian xử lý run (artifact `runtime.json` schema `0.4.0`)
 
 Run mới ghi `runtime.json` sau khi hoàn tất Bước 1 và các nhánh OCR/CV–VLM
-được bật. File có `schema_version: "0.3.0"`, `scope: "full_pipeline"` và
+được bật. File có `schema_version: "0.4.0"`, `scope: "full_pipeline"` và
 `elapsed_seconds` là số giây đồng hồ thực đo từ trước khởi tạo model đến sau
 enrichment. `core_elapsed_seconds` đo từ trước khởi tạo model đến khi ghi xong
 event/clip/manifest; `ocr_elapsed_seconds` và `condition_elapsed_seconds` đo
@@ -23,6 +39,12 @@ trường cũ. Run `0.2.0` không có profile chi tiết.
 clip, được ghi trước enrichment. Run cũ không có `runtime.json` dùng trường
 này với nhãn `step1_core_only`. Schema của `run.json`, event, clip và GT
 không đổi.
+Clip vật lý mới ưu tiên H.264/yuv420p MP4 do FFmpeg/libx264 CPU tạo, fallback
+về OpenCV `mp4v`. `clip_final.mp4` của một segment vẫn sao chép đúng segment;
+với nhiều segment H.264, concat stream copy giữ thứ tự và số frame. Các field
+`clip_uri`, `actual_start_ms`, `actual_end_ms`, `output_frame_count`,
+`timeline_mapping` và `schema_version` không đổi; hash/byte/codec clip có thể
+khác những run tạo bằng OpenCV trước đây.
 API `GET /api/runs/{id}/evaluation` trả `runtime` gồm các trường thời gian trên,
 `raw_duration_seconds` và `total_to_raw_ratio = elapsed_seconds /
 raw_duration_seconds`. Tỷ lệ chỉ tính khi có tổng thời gian toàn pipeline và
@@ -30,6 +52,16 @@ video raw dài hơn 0; còn lại là `null`. Run dùng artifact `runtime.json` 
 vẫn đọc được tổng thời gian; thời gian lõi lấy từ `run.json`, hai nhánh riêng
 hiện `null`. Run cũ chỉ có `run.json` chỉ hiện thời gian lõi, không suy tổng.
 Khi cả hai artifact đều thiếu, `scope` là `unavailable`.
+
+API còn trả các trường tính toán `core_processing_seconds`,
+`ocr_processing_seconds`, `condition_processing_seconds`: thời gian từng chặng
+trừ `detector_load_seconds` hoặc `model_load_seconds` tương ứng trong profile.
+`total_processing_seconds = elapsed_seconds - tổng thời gian nạp model của các
+chặng đã chạy`; `processing_to_raw_ratio` chia tổng xử lý này cho thời lượng
+video raw. Đây là metric hiển thị ở mục Chi phí xử lý; các trường thời gian gốc
+vẫn là wall-clock và không bị sửa. Nếu run cũ không lưu đủ profile nạp model,
+metric xử lý liên quan là `null` (giao diện hiện `—`), không giả định thời gian
+nạp bằng 0. Nhánh tắt cũng có thời gian xử lý `null`.
 
 ## Cài đặt web local (API schema `0.1.0`)
 
@@ -48,7 +80,7 @@ artifact/GT. Schema artifact Bước 1 và GT không thay đổi.
 
 ## Condition Enrichment pilot (artifact schema `0.3.0`, tùy chọn)
 
-Run mới có `schema_version: "0.9.0"`; khi bật phân tích điều kiện,
+Run mới có `schema_version: "0.10.0"`; khi bật phân tích điều kiện,
 `run.json.artifacts.condition_suggestions_uri` trỏ tới
 `condition_suggestions.jsonl` (một dòng cho mỗi event). Dòng gồm `run_id`,
 `event_id`, `source_uri`, `vlm_model`, `evidence_timestamps_ms`,
@@ -75,7 +107,8 @@ GUI lưu GT mới bằng `annotation_schema_version: "0.6.0"`, gồm boolean/nul
 `suggestions.conditions` giữ trạng thái đọc được và nguồn `cv_vlm`. GT cũ vẫn
 đọc được, nhưng tag/detail cũ không tự chuyển đổi và cần người gán rà lại.
 Run cũ không có artifact này vẫn mở được; dùng `run_conditions.py` để bổ sung.
-Khi bổ sung vào run cũ, riêng `run.json.schema_version` tăng lên `0.9.0`;
+Khi bổ sung vào run cũ, riêng `run.json.schema_version` tăng tối thiểu lên
+`0.9.0` và không hạ phiên bản mới hơn (`0.10.0`);
 `events.jsonl`/`clips.jsonl` cũ giữ version gốc vì không bị viết lại.
 
 Web local ghi GT bằng `annotation_schema_version: "0.9.0"`. Mỗi dòng
@@ -136,6 +169,9 @@ chỉnh. File này bổ sung gợi ý, không sửa event/GT. Run 0.3.0 trước
 thể được GUI đọc nhưng không có artifact biển số; chạy `run_plate.py` để
 bổ sung artifact nếu raw và detections vẫn còn. GT annotation giữ schema
 riêng `0.3.0` ở phiên bản cũ; form hiện tại ghi `0.6.0`.
+Chạy plate detector theo batch không đổi field hoặc `schema_version` của
+artifact, nhưng có thể đổi giá trị box/confidence/candidate và consensus vì
+padding đầu vào YOLO khác giữa suy luận batch và suy luận từng crop.
 
 Event `bicycle` không chạy detector biển hoặc OCR. Artifact vẫn có record với
 `plate_applicability="not_applicable"`,
@@ -550,7 +586,12 @@ Mỗi run thực tế nằm trong `outputs/<run-group>/step1-<UTC>/`:
 
 `run.json` có `schema_version`, `run_id`, bản sao `config`, metadata nguồn
 (`uri`, `sha256`, `fps`, `frame_count`, `width`, `height`, `duration_ms`), số
-frame đã decode/sample và `timestamp_basis`.
+frame đã đi qua/sample và `timestamp_basis`. `decoded_frames` là tên trường
+giữ để tương thích: nó đếm vị trí frame nguồn đã đi qua bằng `read()` hoặc
+`grab()`, không có nghĩa mọi frame đều được chuyển thành ảnh BGR.
+`sampled_frames` là số frame đã cấp cho tầng MOG2/lấy mẫu;
+`detector_frames` là số frame thực sự cấp cho YOLO + ByteTrack. Khi MOG2 tắt,
+hai số bằng nhau. Cách đọc frame, timestamp raw và clip không thay đổi.
 Run hiện có thêm `artifacts.detections_uri` trỏ tới `detections.jsonl` và
 `artifacts.detection_record_count`.
 
@@ -558,7 +599,7 @@ Một dòng `events.jsonl` hiện có các trường:
 
 ```json
 {
-  "schema_version": "0.4.0",
+  "schema_version": "0.10.0",
   "run_id": "step1-...",
   "event_id": "EVT-000001",
   "track_id": 12,
@@ -599,7 +640,8 @@ Giao diện dùng cùng endpoint với `?preview=true`: backend tạo/cache bả
 tối đa 960 px rộng trong `.browser_media` của run để trình duyệt phát được.
 Bản xem trước không thay đổi `clip_uri`, manifest, timeline hay file MP4 gốc.
 
-Event schema `0.9.0` thêm `motion_confirmed` và `motion_distance`.
+Event schema `0.9.0` trước đây thêm `motion_confirmed` và `motion_distance`;
+schema `0.10.0` giữ hai field đó.
 `motion_distance` là dịch chuyển anchor lớn nhất so với baseline candidate,
 chuẩn hóa theo kích thước frame. Chỉ event có `motion_confirmed=true` mới
 được ghi vào `events.jsonl`; ngưỡng và cửa sổ nằm trong config tại

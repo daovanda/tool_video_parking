@@ -57,9 +57,15 @@ flowchart LR
    event đã có GT. `Chỉnh sửa` mở màn hình thứ hai ngay trong trang, gồm bảng
    event chỉnh trực tiếp, final clip/các clip và video event kèm overlay
    ByteTrack; nút `Cập nhật` ở cuối bảng chỉ bật khi GT khác bản vừa tải/lưu.
+   Ngay cạnh đó có nút duyệt trong màn hình chi tiết. Nút này lưu snapshot GT
+   trên form nếu còn thay đổi hoặc gợi ý chưa từng được lưu, rồi gọi cùng API
+   duyệt của màn hình danh sách. Sau khi thành công, trạng thái trong trang và
+   danh sách cùng chuyển `REVIEWED`; nếu validate/lưu thất bại thì không duyệt.
    Mở workspace hoặc quay lại danh sách không đổi trạng thái duyệt. Khi lưu
    GT thay đổi của run `REVIEWED`, backend chuyển run sang `DRAFT`; nếu dữ liệu
    gửi lên không đổi thì vẫn giữ `REVIEWED`.
+   Run bật MOG2 hiển thị số frame YOLO thực xử lý / số frame lấy mẫu và số
+   frame gate bỏ qua từ `run.json`; lỗi MOG2 fail-open cũng hiện ở đây.
    Bảng GT có thể thêm hàng `GT-000001`… trực tiếp từ timeline raw cho lượt xe
    Model 1 bỏ sót. Hàng này có `source_event_id=null`, được lưu cùng các hàng
    gắn event dự đoán và được tính vào recall sau duyệt. Người dùng có thể xóa
@@ -93,9 +99,14 @@ flowchart LR
    không lưu kèm từng run: đổi ngưỡng làm điểm run đã duyệt được tính lại khi
    gọi evaluator; GT và dự đoán không đổi.
 
-Event preview phát video raw qua `/api/videos/{video_id}/media`, tua tới
-`event.start_ms` trên timeline nguồn và tra `detections.jsonl` bằng chính
-`video.currentTime`. API result cũng đưa `plate_observations` của đúng event
+Event preview phát video raw qua `/api/videos/{video_id}/media`. Khi chọn
+hàng, frontend gọi API `best-frame` với khoảng thời gian GT đang hiển thị;
+backend dùng cùng hàm chọn frame của Excel: ưu tiên observation biển có điểm
+chất lượng cao nhất, nếu thiếu thì dùng detection xe có confidence cao nhất
+của đúng track, còn GT thủ công dùng giữa khoảng. Player tua tới timestamp
+raw trả về (nếu API lỗi thì về đầu khoảng); bấm lại cùng hàng vẫn tua lại.
+Overlay tra `detections.jsonl` bằng chính `video.currentTime`. API result
+cũng đưa `plate_observations` của đúng event
 từ `plate_observations.jsonl`; frontend vẽ box biển màu vàng khi timestamp
 observation cách frame đang xem tối đa 150 ms. Box xe màu xanh lấy từ
 `detections.jsonl`. Giao diện ghi rõ player đang phát video raw đầy đủ; nút
@@ -179,6 +190,7 @@ tương ứng hiện chưa chạy. Queue/worker không tham gia đánh giá.
 | DELETE | `/api/runs/{id}` | Xóa run terminal, annotation và thư mục artifact; giữ video raw |
 | GET | `/api/runs/{id}/result` | Manifest, clip, event, plate observations, GT hợp lệ và thời lượng raw |
 | GET | `/api/runs/{id}/detections` | Detection trong khoảng raw timeline |
+| GET | `/api/runs/{id}/events/{event_id}/best-frame` | Timestamp frame tốt nhất theo khoảng `start_ms`/`end_ms`, dùng cùng quy tắc với Excel |
 | GET | `/api/runs/{id}/media/{path}` | File gốc; `?preview=true` trả bản H.264 tương thích browser và cache trong run |
 | POST | `/api/runs/{id}/export.xlsx` | Tạo Excel từ snapshot hàng GT gửi lên, kèm frame có box khi có detection |
 | PUT | `/api/runs/{id}/annotations` | Lưu GT theo lô; chỉ chuyển `REVIEWED` sang `DRAFT` khi nội dung thay đổi |

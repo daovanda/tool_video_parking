@@ -1,5 +1,25 @@
 # Đặc tả bước 1: phát hiện lượt xe và cắt video
 
+## Bộ lọc chuyển động MOG2 tùy chọn trước detector (triển khai 29/09/2026)
+
+`motion_gate_enabled=false` mặc định. Khi bật, MOG2 quan sát các frame ở
+`sample_fps` sau khi thu nhỏ; chỉ foreground trong ROI được tính, không có
+ROI thì dùng toàn frame. YOLO phải chạy ở giai đoạn khởi động, trong khoảng
+giữ sau chuyển động, khi EventEngine còn track mở, và mỗi chu kỳ dò kể cả
+không thấy chuyển động. Frame bị gate bỏ qua được ghi là
+`detector_skipped=true`, không được xem là một lần YOLO dự đoán rỗng.
+`sampled_frames` vẫn là số frame đưa qua tầng lấy mẫu; `detector_frames` là
+số frame thực sự gọi YOLO. Video raw, timestamp và quy tắc clip không đổi.
+
+Ngưỡng mặc định: ảnh MOG2 rộng 320 px, diện tích tiền cảnh tối thiểu 0,2%
+của vùng xét; khởi động 1 giây, giữ sau chuyển động 1,5 giây và dò lại mỗi
+0,5 giây. Các tham số này nằm trong `RunConfig`; có thể chỉnh qua JSON/API,
+CLI có cờ `--motion-gate`, web và GUI có checkbox. Khi MOG2 lỗi OpenCV,
+pipeline tiếp tục bằng YOLO cho tất cả frame còn lại và ghi lỗi fallback
+trong `run.json`. Đây là bộ lọc ưu tiên recall, không bảo đảm không bỏ sót ở
+mọi camera; trước khi bật mặc định cần đối chiếu với GT từ video thực có
+nhiều đoạn yên, xe đi chậm, thay đổi sáng và bóng.
+
 ## Hủy run web local
 
 Run `QUEUED` hoặc `RUNNING` có thể nhận tín hiệu hủy từ web. Worker kiểm tra
@@ -132,6 +152,11 @@ Baseline đề xuất:
 
 - Detector chỉ giữ ba lớp COCO `bicycle`, `car`, `motorcycle`; mọi lớp khác bị loại khỏi logic tạo event.
 - ByteTrack hoặc tracker tương đương chạy riêng cho từng camera.
+- Pilot đọc tuần tự mọi vị trí frame để giữ timeline; ở vị trí được chọn theo
+  `sample_fps` dùng OpenCV `read()` lấy ảnh BGR cho detector, còn vị trí bỏ qua
+  dùng `grab()` để tiến decoder mà không tạo ảnh BGR. Lịch lấy mẫu và timestamp
+  vẫn tính từ frame index/FPS nguồn; video xuất cho bước sau giữ FPS và kích
+  thước nguồn. Đây không phải MOG2 hoặc bộ lọc khoảng trước YOLO.
 - Không dùng biển số để tạo event ở bước 1 vì biển nhỏ/bẩn/tối có thể làm mất cả lượt xe trước khi tới model dev.
 - Giữ detection confidence tương đối thấp ở bước tạo candidate; tracker và ROI giúp loại nhiễu. Ngưỡng phải chọn trên validation.
 
@@ -331,6 +356,20 @@ Nếu detector pretrained hụt nhiều xe máy hoặc ca che khuất, gán thê
 7. Khóa test và phát hành báo cáo bước 1 theo từng làn.
 
 Đầu ra hoàn thành của bước 1 phải cho phép trả lời được ba câu hỏi: có bỏ sót lượt xe nào không, có giữ được lúc biển số đọc được không, và đã giảm được bao nhiêu video với chi phí xử lý bao nhiêu.
+
+## Xuất clip vật lý hiện đã triển khai
+
+Pipeline quy đổi `start_ms/end_ms` sang chỉ số frame như cũ, lấy đủ frame đầu
+đến trước frame cuối, và xuất CFR theo FPS raw. Trên máy có `imageio-ffmpeg`
+hoặc lệnh `ffmpeg`, đường ưu tiên dùng CPU `libx264` preset `ultrafast`,
+H.264/yuv420p MP4; FFmpeg phải trả đúng số frame, FPS và decode được frame
+đầu. Clip bắt đầu muộn seek gần vị trí cần cắt rồi đối chiếu frame đầu/cuối
+với raw; nếu lệch thì giải mã/đếm frame từ đầu. Nếu FFmpeg thiếu hoặc lỗi,
+dùng lại `cv2.VideoWriter` `mp4v`. Nhiều clip do
+FFmpeg tạo được nối bằng concat stream copy theo thứ tự nguồn; nếu không,
+đường nối OpenCV vẫn hoạt động. Mốc raw và frame count giữ nguyên nhưng codec,
+byte file và sai số nén ảnh khác bản MP4 cũ. Không áp dụng cắt stream copy theo
+keyframe cho clip con vì có thể làm lệch ranh giới.
 # Plate Enrichment tùy chọn hiện đã triển khai
 
 Sau khi Bước 1 tạo `events.jsonl` và `detections.jsonl`, enrichment đọc raw
@@ -342,3 +381,11 @@ chọn tối đa 5 frame cách nhau ít nhất 300 ms. Model
 được cộng trọng số `quality.score × ocr_confidence`. Kết quả chỉ là gợi ý
 `plate_text` trong HITL, không tự ghi thành nhãn chuẩn. Nếu không tìm được
 biển hoặc OCR rỗng, consensus là `null`.
+YOLO biển số chạy theo lô tối đa 8 crop trong mỗi event; thứ tự kết quả vẫn
+ứng với thứ tự frame. Khi crop trong lô có kích thước khác nhau, padding của
+model có thể khiến box, confidence và frame được chọn khác cách gọi từng crop.
+Không coi batch là bảo đảm kết quả gợi ý giống từng byte với run cũ.
+Trong từng event, crop biển có padding OCR được giữ tạm tối đa 64 MiB ở RAM
+khi đọc frame để detect; frame được chọn sẽ OCR trực tiếp từ crop này. Khi
+giới hạn bộ nhớ không đủ, nhánh OCR đọc lại đúng frame raw như trước. Crop
+cache không thêm field/artifact và phải giữ cùng pixel với cách đọc lại raw.

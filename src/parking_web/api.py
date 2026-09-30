@@ -20,7 +20,7 @@ from parking_step1.evaluation import load_jsonl, save_jsonl
 from parking_step1.pipeline import video_info
 
 from .jobs import RunJobs
-from .export_excel import make_review_workbook
+from .export_excel import _best_frame, make_review_workbook
 from .media import browser_compatible_mp4
 from .metrics import evaluate_review
 from .storage import WebStorage, utc_now
@@ -55,6 +55,12 @@ class RunPayload(BaseModel):
     model: str = "yolo26s.pt"
     image_size: int = 960
     sample_fps: float = 10
+    motion_gate_enabled: bool = False
+    motion_gate_width: int = Field(default=320, ge=16)
+    motion_gate_min_area_fraction: float = Field(default=.002, gt=0, le=1)
+    motion_gate_warmup_seconds: float = Field(default=1.0, ge=0)
+    motion_gate_hold_seconds: float = Field(default=1.5, ge=0)
+    motion_gate_probe_seconds: float = Field(default=.5, gt=0)
     confidence: float = .12
     candidate_hits: int = 2
     min_motion_distance: float = .015
@@ -140,6 +146,12 @@ def _config(payload: RunPayload, output_dir: Path) -> RunConfig:
         camera=CameraConfig(**payload.camera.model_dump()), source=video["stored_path"],
         output_dir=str(output_dir), model=payload.model, image_size=payload.image_size,
         sample_fps=payload.sample_fps, confidence=payload.confidence,
+        motion_gate_enabled=payload.motion_gate_enabled,
+        motion_gate_width=payload.motion_gate_width,
+        motion_gate_min_area_fraction=payload.motion_gate_min_area_fraction,
+        motion_gate_warmup_seconds=payload.motion_gate_warmup_seconds,
+        motion_gate_hold_seconds=payload.motion_gate_hold_seconds,
+        motion_gate_probe_seconds=payload.motion_gate_probe_seconds,
         candidate_hits=payload.candidate_hits, min_motion_distance=payload.min_motion_distance,
         motion_window_seconds=payload.motion_window_seconds,
         line_gate_margin=payload.line_gate_margin, grace_seconds=payload.grace_seconds,
@@ -382,6 +394,27 @@ def detections(run_id: str, start_ms: int = Query(0, ge=0), end_ms: int = Query(
     return [item for item in records if start_ms <= item["timestamp_ms"] <= end_ms]
 
 
+@app.get("/api/runs/{run_id}/events/{event_id}/best-frame")
+def event_best_frame(run_id: str, event_id: str, start_ms: int = Query(ge=0),
+                     end_ms: int = Query(ge=0)):
+    run = _run(run_id)
+    if run["status"] != "COMPLETED":
+        raise HTTPException(409, "Run chưa hoàn thành")
+    if end_ms < start_ms:
+        raise HTTPException(422, "Khoảng event không hợp lệ")
+    root = Path(run["run_dir"])
+    events = {item["event_id"]: item for item in _jsonl_optional(root / "events.jsonl")}
+    event = events.get(event_id)
+    if event is None and not re.fullmatch(r"GT-\d{6}", event_id):
+        raise HTTPException(404, "Event không thuộc run")
+    plate = next((item for item in _jsonl_optional(root / "plate_observations.jsonl")
+                  if item["event_id"] == event_id), None)
+    records = [item for item in _jsonl_optional(root / "detections.jsonl")
+               if start_ms <= item["timestamp_ms"] <= end_ms]
+    timestamp_ms, _, _ = _best_frame(event, start_ms, end_ms, plate, records)
+    return {"timestamp_ms": timestamp_ms}
+
+
 @app.get("/api/runs/{run_id}/media/{relative:path}")
 def run_media(run_id: str, relative: str, preview: bool = False):
     run = _run(run_id)
@@ -516,6 +549,30 @@ def run_evaluation(run_id: str):
     runtime["total_to_raw_ratio"] = (total_seconds / runtime["raw_duration_seconds"]
                                      if isinstance(total_seconds, (int, float)) and runtime["raw_duration_seconds"] > 0
                                      else None)
+    # Processing cost excludes loading weights into memory, while the original
+    # elapsed fields remain wall-clock measurements for diagnostics.
+    stages = (("core", "detector_load_seconds"),
+              ("ocr", "model_load_seconds"),
+              ("condition", "model_load_seconds"))
+    loads = []
+    for stage, load_key in stages:
+        elapsed = runtime.get(f"{stage}_elapsed_seconds")
+        profile = runtime.get(f"{stage}_profile_seconds")
+        load = profile.get(load_key) if isinstance(profile, dict) else None
+        processing = (round(max(0.0, elapsed - load), 3)
+                      if isinstance(elapsed, (int, float)) and isinstance(load, (int, float))
+                      and 0 <= load <= elapsed else None)
+        runtime[f"{stage}_processing_seconds"] = processing
+        if elapsed is not None:
+            loads.append(load if processing is not None else None)
+    runtime["total_processing_seconds"] = (
+        round(max(0.0, total_seconds - sum(loads)), 3)
+        if isinstance(total_seconds, (int, float)) and loads and all(load is not None for load in loads)
+        else None)
+    processing_total = runtime["total_processing_seconds"]
+    runtime["processing_to_raw_ratio"] = (
+        processing_total / runtime["raw_duration_seconds"]
+        if processing_total is not None and runtime["raw_duration_seconds"] > 0 else None)
     evaluation_settings = get_settings()["evaluation"]
     return {"run": run, "runtime": runtime, "metrics": evaluate_review(
         result["gt_events"], result["events"], result["clips"], result["video_duration_ms"],

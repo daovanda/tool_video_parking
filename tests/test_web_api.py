@@ -76,11 +76,16 @@ class WebApiTests(unittest.TestCase):
         payload["camera"]["crossing_line"] = [[.1, .5], [.9, .5]]
         self.assertEqual(self.client.post("/api/configs/validate", json=payload).status_code, 200)
         advanced = {**payload, "plate_confidence": .42, "plate_top_k": 7,
-                    "plate_min_gap_ms": 450, "plate_class_name": "Vehicle registration plate"}
+                    "plate_min_gap_ms": 450, "plate_class_name": "Vehicle registration plate",
+                    "motion_gate_enabled": True, "motion_gate_probe_seconds": .5}
         config = self.module._config(self.module.RunPayload.model_validate(advanced),
                                      Path(self.temp.name) / "validation")
         self.assertEqual((config.plate_confidence, config.plate_top_k,
                           config.plate_min_gap_ms), (.42, 7, 450))
+        self.assertTrue(config.motion_gate_enabled)
+        self.assertEqual(config.motion_gate_probe_seconds, .5)
+        self.assertEqual(self.client.post("/api/configs/validate", json={**advanced,
+            "motion_gate_probe_seconds": 0}).status_code, 422)
 
     def test_02_result_annotation_and_review_flow(self):
         video = self.module.storage.list_videos()[0]
@@ -130,6 +135,17 @@ class WebApiTests(unittest.TestCase):
         self.assertEqual(suggestion["plate_support_count"], 2)
         self.assertEqual(suggestion["cv_clean_fraction"], 0.5)
         self.assertTrue(suggestion["vlm_readable"])
+        best_url = f"/api/runs/{web_run['id']}/events/EVT-000001/best-frame"
+        self.assertEqual(self.client.get(best_url, params={"start_ms": 100, "end_ms": 500}).json(),
+                         {"timestamp_ms": 200})
+        self.assertEqual(self.client.get(best_url, params={"start_ms": 300, "end_ms": 500}).json(),
+                         {"timestamp_ms": 400})
+        manual_url = f"/api/runs/{web_run['id']}/events/GT-000001/best-frame"
+        self.assertEqual(self.client.get(manual_url, params={"start_ms": 100, "end_ms": 500}).json(),
+                         {"timestamp_ms": 300})
+        self.assertEqual(self.client.get(best_url, params={"start_ms": 500, "end_ms": 100}).status_code, 422)
+        self.assertEqual(self.client.get(f"/api/runs/{web_run['id']}/events/UNKNOWN/best-frame",
+                                         params={"start_ms": 100, "end_ms": 500}).status_code, 404)
         (run_dir / "condition_suggestions.jsonl").unlink()
         media = self.client.get(f"/api/runs/{web_run['id']}/media/{clip['clip_uri']}",
                                 headers={"Range": "bytes=0-31"})
@@ -196,6 +212,22 @@ class WebApiTests(unittest.TestCase):
         self.assertEqual(timed["runtime"]["condition_elapsed_seconds"], 5.5)
         self.assertAlmostEqual(timed["runtime"]["total_to_raw_ratio"],
                                12.5 / timed["runtime"]["raw_duration_seconds"])
+        self.assertIsNone(timed["runtime"]["total_processing_seconds"])
+        self.assertIsNone(timed["runtime"]["processing_to_raw_ratio"])
+        (run_dir / "runtime.json").write_text(json.dumps({"schema_version": "0.3.0",
+            "scope": "full_pipeline", "elapsed_seconds": 12.5,
+            "core_elapsed_seconds": 3.0, "ocr_elapsed_seconds": 4.0,
+            "condition_elapsed_seconds": 5.5,
+            "core_profile_seconds": {"detector_load_seconds": 0.5},
+            "ocr_profile_seconds": {"model_load_seconds": 1.0},
+            "condition_profile_seconds": {"model_load_seconds": 1.5}}), encoding="utf-8")
+        profiled = self.client.get(f"/api/runs/{web_run['id']}/evaluation").json()["runtime"]
+        self.assertEqual(profiled["core_processing_seconds"], 2.5)
+        self.assertEqual(profiled["ocr_processing_seconds"], 3.0)
+        self.assertEqual(profiled["condition_processing_seconds"], 4.0)
+        self.assertEqual(profiled["total_processing_seconds"], 9.5)
+        self.assertAlmostEqual(profiled["processing_to_raw_ratio"],
+                               9.5 / profiled["raw_duration_seconds"])
         (run_dir / "runtime.json").unlink()
         (run_dir / "run.json").write_text(json.dumps({"artifacts": {"final_clip": None},
             "elapsed_seconds": 8.5}), encoding="utf-8")

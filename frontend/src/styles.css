@@ -14,3 +14,8 @@
 .stopRunButton{color:#9a3828;border-color:#f0d0ca}.stopRunButton:hover{background:#fff0ed}.stopRunButton:disabled{opacity:.45;cursor:not-allowed}
 .rowActions>.primary.compact{width:112px;min-width:112px}
 .runHeaderActions{display:flex;gap:10px;align-items:center}.runMessage{min-width:180px;max-width:320px;white-space:normal;font-size:11px;color:#61776b}
+
+.tableActions{display:grid;gap:8px;min-width:0}
+.tableActions>span{margin-right:0}
+.tableActionButtons{display:flex;gap:8px;overflow-x:auto;white-space:nowrap}
+.tableActionButtons>button{flex:0 0 auto}.tableActionButtons>button:first-child{margin-left:auto}

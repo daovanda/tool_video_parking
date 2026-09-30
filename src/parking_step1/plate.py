@@ -24,6 +24,8 @@ os.environ.setdefault("TRANSFORMERS_NO_TF", "1")
 
 
 PLATE_SCHEMA_VERSION = "0.2.0"
+PLATE_DETECTION_BATCH_SIZE = 8
+OCR_CROP_CACHE_LIMIT_BYTES = 64 * 1024 * 1024
 
 
 def normalize_plate(text: str) -> str:
@@ -98,7 +100,18 @@ class YoloPlateDetector:
         self.confidence = confidence
 
     def detect(self, vehicle_crop: np.ndarray) -> list[dict]:
-        result = self.model.predict(vehicle_crop, conf=self.confidence, verbose=False)[0]
+        return self.detect_batch([vehicle_crop])[0]
+
+    def detect_batch(self, vehicle_crops: list[np.ndarray]) -> list[list[dict]]:
+        if not vehicle_crops:
+            return []
+        results = self.model.predict(vehicle_crops, conf=self.confidence,
+                                     batch=len(vehicle_crops), verbose=False)
+        if len(results) != len(vehicle_crops):
+            raise RuntimeError("Plate detector trả về số kết quả khác số crop đầu vào")
+        return [self._plate_boxes(result) for result in results]
+
+    def _plate_boxes(self, result) -> list[dict]:
         if result.boxes is None:
             return []
         detections = []
@@ -178,6 +191,50 @@ def run_plate_enrichment(run_dir: str | Path, config, *, detector=None, ocr=None
                              f"Plate OCR: bỏ qua bicycle {index+1}/{len(events)} event")
                 continue
             candidates = []
+            pending: list[tuple[np.ndarray, np.ndarray, list[int], dict, list[int], dict]] = []
+            cached_ocr_crops: dict[int, np.ndarray] = {}
+            cached_ocr_bytes = 0
+
+            def flush_pending() -> None:
+                nonlocal cached_ocr_bytes
+                if not pending:
+                    return
+                if cancel and cancel():
+                    raise RuntimeError("Đã hủy xử lý biển số")
+                phase_start = time.monotonic()
+                crops = [item[0] for item in pending]
+                batches = (detector.detect_batch(crops) if hasattr(detector, "detect_batch")
+                           else [detector.detect(crop) for crop in crops])
+                timings["plate_detection_seconds"] += time.monotonic() - phase_start
+                if len(batches) != len(pending):
+                    raise RuntimeError("Plate detector trả về số kết quả khác số crop đầu vào")
+                for (vehicle_crop, outer_crop, outer_box, record, vehicle_box, vehicle), plates_found in zip(pending, batches):
+                    vx1, vy1, vx2, vy2 = vehicle_box
+                    for plate in plates_found:
+                        px1, py1, px2, py2 = clipped_box(plate["box"], vx2-vx1, vy2-vy1)
+                        if px2 <= px1 or py2 <= py1:
+                            continue
+                        plate_crop = vehicle_crop[py1:py2, px1:px2]
+                        if plate_crop.size == 0:
+                            continue
+                        plate_box = [vx1+px1, vy1+py1, vx1+px2, vy1+py2]
+                        item = {"timestamp_ms": int(record["timestamp_ms"]),
+                                           "frame_index": int(record["frame_index"]),
+                                           "vehicle_box": vehicle["box"],
+                                           "plate_box": plate_box,
+                                           "plate_confidence": plate["confidence"],
+                                           "quality": frame_quality(plate_crop, plate["confidence"],
+                                                                    (vx2-vx1)*(vy2-vy1))}
+                        candidates.append(item)
+                        x1, y1, x2, y2 = clipped_box(plate_box, width, height, .05)
+                        ox1, oy1, _, _ = outer_box
+                        ocr_crop = outer_crop[y1-oy1:y2-oy1, x1-ox1:x2-ox1]
+                        if (ocr_crop.shape[:2] == (y2-y1, x2-x1) and
+                                cached_ocr_bytes + ocr_crop.nbytes <= OCR_CROP_CACHE_LIMIT_BYTES):
+                            cached_ocr_crops[id(item)] = ocr_crop.copy()
+                            cached_ocr_bytes += ocr_crop.nbytes
+                pending.clear()
+
             for record in records:
                 timestamp_ms = int(record["timestamp_ms"])
                 if not event["start_ms"] <= timestamp_ms <= event["end_ms"]:
@@ -194,34 +251,28 @@ def run_plate_enrichment(run_dir: str | Path, config, *, detector=None, ocr=None
                     vx1, vy1, vx2, vy2 = clipped_box(vehicle["box"], width, height, .12)
                     if vx2 <= vx1 or vy2 <= vy1:
                         continue
-                    vehicle_crop = frame[vy1:vy2, vx1:vx2]
-                    phase_start = time.monotonic()
-                    plates_found = detector.detect(vehicle_crop)
-                    timings["plate_detection_seconds"] += time.monotonic() - phase_start
-                    for plate in plates_found:
-                        px1, py1, px2, py2 = clipped_box(plate["box"], vx2-vx1, vy2-vy1)
-                        if px2 <= px1 or py2 <= py1:
-                            continue
-                        plate_crop = vehicle_crop[py1:py2, px1:px2]
-                        if plate_crop.size == 0:
-                            continue
-                        candidates.append({"timestamp_ms": timestamp_ms,
-                                           "frame_index": int(record["frame_index"]),
-                                           "vehicle_box": vehicle["box"],
-                                           "plate_box": [vx1+px1, vy1+py1, vx1+px2, vy1+py2],
-                                           "plate_confidence": plate["confidence"],
-                                           "quality": frame_quality(plate_crop, plate["confidence"],
-                                                                    (vx2-vx1)*(vy2-vy1))})
+                    vehicle_crop = frame[vy1:vy2, vx1:vx2].copy()
+                    outer_box = clipped_box([vx1, vy1, vx2, vy2], width, height, .05)
+                    ox1, oy1, ox2, oy2 = outer_box
+                    outer_crop = frame[oy1:oy2, ox1:ox2].copy()
+                    pending.append((vehicle_crop, outer_crop, outer_box, record,
+                                    [vx1, vy1, vx2, vy2], vehicle))
+                    if len(pending) == PLATE_DETECTION_BATCH_SIZE:
+                        flush_pending()
+            flush_pending()
             selected = select_diverse(candidates, config.plate_top_k, config.plate_min_gap_ms)
             for item in selected:
+                ocr_crop = cached_ocr_crops.get(id(item))
+                if ocr_crop is None:
+                    phase_start = time.monotonic()
+                    ok, frame = frames.read(item["frame_index"])
+                    timings["frame_seek_decode_seconds"] += time.monotonic() - phase_start
+                    if not ok:
+                        continue
+                    x1, y1, x2, y2 = clipped_box(item["plate_box"], width, height, .05)
+                    ocr_crop = frame[y1:y2, x1:x2]
                 phase_start = time.monotonic()
-                ok, frame = frames.read(item["frame_index"])
-                timings["frame_seek_decode_seconds"] += time.monotonic() - phase_start
-                if not ok:
-                    continue
-                x1, y1, x2, y2 = clipped_box(item["plate_box"], width, height, .05)
-                phase_start = time.monotonic()
-                text, confidence = ocr.recognize(frame[y1:y2, x1:x2])
+                text, confidence = ocr.recognize(ocr_crop)
                 timings["ocr_seconds"] += time.monotonic() - phase_start
                 item["ocr_text_raw"] = text
                 item["ocr_text_normalized"] = normalize_plate(text)
@@ -242,7 +293,8 @@ def run_plate_enrichment(run_dir: str | Path, config, *, detector=None, ocr=None
         capture.release()
     artifact = run_dir / "plate_observations.jsonl"
     artifact.write_text("".join(json.dumps(item, ensure_ascii=False) + "\n" for item in output), encoding="utf-8")
-    run["schema_version"] = "0.9.0"
+    run["schema_version"] = max(run.get("schema_version", "0.0.0"), "0.9.0",
+                                key=lambda version: tuple(map(int, version.split("."))))
     run.setdefault("artifacts", {})["plate_observations_uri"] = artifact.name
     run["artifacts"]["plate_event_count"] = len(output)
     (run_dir / "run.json").write_text(json.dumps(run, ensure_ascii=False, indent=2), encoding="utf-8")

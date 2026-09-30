@@ -294,6 +294,7 @@ class MainWindow(QMainWindow):
         self.model_edit = QLineEdit("yolo26s.pt")
         self.img_size = QSpinBox(); self.img_size.setRange(320, 1920); self.img_size.setSingleStep(32); self.img_size.setValue(960)
         self.sample_fps = QDoubleSpinBox(); self.sample_fps.setRange(1, 60); self.sample_fps.setValue(10); self.sample_fps.setSuffix(" FPS")
+        self.motion_gate = QCheckBox("Lọc frame yên bằng MOG2 trước YOLO (thử nghiệm)")
         self.confidence = QDoubleSpinBox(); self.confidence.setRange(0.01, 1); self.confidence.setSingleStep(0.01); self.confidence.setValue(0.12)
         self.hits = QSpinBox(); self.hits.setRange(1, 30); self.hits.setValue(2)
         self.min_motion = QDoubleSpinBox(); self.min_motion.setRange(0, 0.5); self.min_motion.setDecimals(3); self.min_motion.setSingleStep(0.005); self.min_motion.setValue(0.015); self.min_motion.setSuffix(" chuẩn hóa")
@@ -316,6 +317,7 @@ class MainWindow(QMainWindow):
                               ("Grace", self.grace), ("Buffer trước", self.pre), ("Buffer sau", self.post)):
             sf.addRow(label, widget)
         sf.addRow(self.make_clips)
+        sf.addRow(self.motion_gate)
         sf.addRow(self.plate_ocr)
         sf.addRow("Model biển số", self.plate_model_edit)
         sf.addRow("Model OCR", self.ocr_model_edit)
@@ -826,6 +828,7 @@ class MainWindow(QMainWindow):
             source=self.source_edit.text().strip(), output_dir=self.output_edit.text().strip(),
             model=self.model_edit.text().strip(), image_size=self.img_size.value(),
             sample_fps=self.sample_fps.value(), confidence=self.confidence.value(),
+            motion_gate_enabled=self.motion_gate.isChecked(),
             candidate_hits=self.hits.value(), min_motion_distance=self.min_motion.value(),
             motion_window_seconds=self.motion_window.value(), line_gate_margin=self.line_gate_margin.value(), grace_seconds=self.grace.value(),
             pre_seconds=self.pre.value(), post_seconds=self.post.value(), make_clips=self.make_clips.isChecked(),
@@ -859,6 +862,7 @@ class MainWindow(QMainWindow):
             self.canvas.roi = config.camera.roi; self.canvas.line = config.camera.crossing_line
             self.model_edit.setText(config.model); self.img_size.setValue(config.image_size)
             self.sample_fps.setValue(config.sample_fps); self.confidence.setValue(config.confidence)
+            self.motion_gate.setChecked(config.motion_gate_enabled)
             self.hits.setValue(config.candidate_hits); self.min_motion.setValue(config.min_motion_distance); self.motion_window.setValue(config.motion_window_seconds); self.line_gate_margin.setValue(config.line_gate_margin); self.grace.setValue(config.grace_seconds)
             self.pre.setValue(config.pre_seconds); self.post.setValue(config.post_seconds)
             self.make_clips.setChecked(config.make_clips)

@@ -1,21 +1,22 @@
 # Nghiên cứu và đề xuất đánh giá tool video bãi xe
 
-## Web local: phần 4 Chi phí xử lý (24/09/2026)
+## Web local: phần 4 Chi phí xử lý (cập nhật 25/09/2026)
 
-Trang chi tiết Đánh giá hiện thêm thời gian chạy run tạo gợi ý, đơn vị giây
-hoặc phút–giây. Run mới đọc `runtime.json.elapsed_seconds` với
-`scope=full_pipeline`, gồm khởi tạo model, phát hiện event, xuất clip và các
-nhánh OCR/CV–VLM được bật. Run cũ chỉ có `run.json.elapsed_seconds` được
-hiển thị với nhãn `step1_core_only`, vì số này chưa gồm enrichment. Không
+Trang chi tiết Đánh giá hiện chi phí xử lý run tạo gợi ý, đơn vị giây hoặc
+phút–giây. Artifact `runtime.json` giữ thời gian wall-clock từng chặng; API
+trừ thời gian nạp detector/model trong profile để tính ba thời gian xử lý và
+tổng xử lý hiển thị. Thời gian đọc/giải mã raw, suy luận và xuất clip vẫn được
+tính. Run cũ không có profile nạp model hiện `—` thay vì ước lượng. Không
 dùng `runs.updated_at - runs.created_at`: thời gian chờ queue và thao tác
 review có thể làm sai lệch. Đây là metric vận hành, không so với GT và
 chưa gồm chi phí GPU/tiền điện hay dung lượng lưu trữ. Bốn ô hiển thị thời gian
-phát hiện/cắt clip, OCR, CV–VLM, và **tổng thời gian / thời lượng video raw**.
-Ô cuối là tỷ số `T_run / T_raw`; ví dụ 2× nghĩa là xử lý mất thời gian gấp đôi
-độ dài video. Run thiếu tổng thời gian hoặc nhánh chưa đo hiện `—`, không coi
+phát hiện/cắt clip, OCR, CV–VLM, và **tổng xử lý / thời lượng video raw**.
+Ô cuối là tỷ số `T_processing / T_raw`; ví dụ 2× nghĩa là xử lý (sau khi trừ
+nạp model) mất thời gian gấp đôi độ dài video. Run thiếu profile hoặc nhánh
+chưa đo hiện `—`, không coi
 thời gian của nhánh bằng 0. Tổng có thể lớn hơn tổng ba chặng vì có overhead
-điều phối/ghi artifact. Run 0.1.0 vẫn hiện tổng và lõi nếu có, nhưng thiếu
-thời gian từng nhánh.
+điều phối/ghi artifact. Các trường wall-clock gốc vẫn lưu nguyên trong
+`runtime.json` để chẩn đoán.
 
 ## Web local: metric trên GT đã duyệt (đã triển khai 23/09/2026)
 
@@ -218,6 +219,16 @@ Một dòng lỗi cần đủ: run/model version, event ID, link video + timesta
 | Huấn luyện model phân loại đoạn video riêng | Có thể thích nghi đặc thù cảnh | Cần nhãn và công huấn luyện; chỉ cân nhắc sau khi baseline bộc lộ lỗi khó sửa bằng cấu hình/fine-tune. |
 
 Cấu hình thử ban đầu, không phải thông số đã chứng minh: detector pretrained thuộc họ YOLO hoặc detector xe sẵn có, ByteTrack, ROI riêng từng camera; so sánh 5/10 FPS và FPS gốc trên pilot. Buffer trước/sau thử 1–2 giây, thời gian chờ mất track thử 1–3 giây. Lưu khoảng theo timestamp và hiệu chỉnh theo thời gian thực khi đổi FPS. Chọn cấu hình theo event/readable recall trước, reduction và runtime sau.
+
+**Pilot MOG2 từ 29/09/2026:** MOG2 đã được thêm làm gate tùy chọn trước
+YOLO/ByteTrack, không thay detector. Bài toán đánh giá là *giảm lượt gọi YOLO
+trong khoảng yên nhưng giữ event recall*. Báo cáo cần có
+`detector_frames/sampled_frames`, chi phí gate, thời gian YOLO+gate, recall
+event và sai lệch start/end so với GT trên video có thời gian yên dài, xe đi
+chậm, đổi sáng và bóng. Trên video test 17,395 s có event gần liên tục,
+gate không bỏ frame nào; trên video tĩnh 20 s, bỏ 148/200 frame detector và
+giảm thời gian YOLO+gate từ 33,188 xuống 8,906 s. Đây là bằng chứng hiệu
+năng ở hai tình huống, chưa đủ để khẳng định recall trên camera sản xuất.
 
 Giữ video trong lúc xe có mặt trong ROI, có hysteresis để một vài detection hụt không cắt ngay. Tách logic presence để giữ clip khỏi logic crossing để đếm lượt; xe dừng trước vạch vẫn cần dữ liệu. Có cơ chế xử lý mất track/tái nhập để không giữ video vô hạn hoặc đếm trùng. Giữ ảnh gốc, độ phân giải và ánh xạ thời gian; đo lại chất lượng sau encode, không mặc định video nén lại tương đương đầu vào.
 

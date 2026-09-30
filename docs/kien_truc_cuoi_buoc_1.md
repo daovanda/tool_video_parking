@@ -6,6 +6,23 @@
 
 ## 0.1 Hiện đã triển khai
 
+### Bộ lọc MOG2 tùy chọn trước YOLO
+
+Khi `motion_gate_enabled=true`, pipeline áp MOG2 lên từng frame đã lấy mẫu
+ở bản thu nhỏ (mặc định rộng 320 px), chỉ tính tiền cảnh trong ROI cấu hình;
+không có ROI thì dùng toàn frame. YOLO + ByteTrack vẫn là detector/tracker
+quyết định event. Gate luôn gọi YOLO trong 1 giây khởi động, khi MOG2 thấy
+chuyển động và 1,5 giây sau đó, khi EventEngine còn track đang mở, hoặc tới
+nhịp dò định kỳ 0,5 giây. Các frame còn lại chỉ cập nhật MOG2 và EventEngine
+với detection rỗng; frame raw vẫn được đi qua để giữ timeline. Nếu OpenCV
+MOG2 lỗi, pipeline tắt gate cho phần còn lại của run và gọi YOLO mỗi frame.
+Mỗi run tự tạo MOG2 và ByteTrack, không chia sẻ trạng thái giữa camera/run.
+Tính năng mặc định tắt để các run cũ giữ hành vi; web, CLI và GUI có công
+tắc bật. `detections.jsonl` đánh dấu `detector_skipped`; `run.json` ghi số
+frame gọi YOLO và số frame bỏ qua. OCR, CV–VLM và xuất clip vẫn chạy tuần tự
+sau lõi bước 1, không dùng mặt nạ MOG2 làm nhãn hoặc GT. Gate giảm số lần
+YOLO ở camera yên; nó không giảm số frame raw phải đọc/giải mã để kiểm tra.
+
 Ngoài PyQt/CLI, repository đã có web local tách React frontend, FastAPI
 backend, SQLite/filesystem storage và mặc định hai worker nền. Web có trang tổng quan,
 upload video, cấu hình/vẽ ROI-line/chạy pipeline, và kết quả/HITL/review.
@@ -17,10 +34,22 @@ Pipeline ghi `runtime.json` sau các nhánh để lưu tổng thời gian và ba
 phát hiện/cắt clip, OCR, CV–VLM. Evaluator đọc artifact này cùng thời lượng
 raw từ video metadata để hiển thị chi phí thời gian; không ghi ngược vào GT.
 Run mới còn ghi profile thời gian bên trong ba chặng để tách giải mã video,
-model, OCR/VLM và xuất MP4. Khi chỉ có một segment vật lý, `clip_final.mp4`
+model, OCR/VLM và xuất MP4.
+Evaluator dùng profile để trừ thời gian nạp model khỏi từng chặng và tổng chi
+phí xử lý hiển thị; artifact `runtime.json` vẫn giữ nguyên thời gian wall-clock.
+Run thiếu profile không được suy đoán chi phí xử lý.
+Khi chỉ có một segment vật lý, `clip_final.mp4`
 được sao chép từ MP4 segment đã mã hóa: cùng byte, hash, frame và timeline;
 không giải mã raw và mã hóa lại lần thứ hai. Với nhiều segment, pipeline vẫn
-nối theo thứ tự thời gian bằng đường xuất hiện tại.
+nối theo thứ tự thời gian. Đường xuất clip ưu tiên FFmpeg/libx264 CPU
+(`ultrafast`, H.264/yuv420p): giải mã đúng các frame thuộc segment và mã hóa
+MP4 có `faststart`. Clip bắt đầu muộn seek gần frame đầu và đối chiếu frame
+đầu/cuối với raw; nếu seek lệch thì thử lại bằng cách đếm frame từ đầu.
+Nếu FFmpeg thiếu hoặc đầu ra không vượt kiểm tra số frame, FPS và decode,
+pipeline quay về OpenCV `mp4v`. Khi nhiều segment đều do
+FFmpeg tạo, final dùng concat demuxer và sao chép luồng H.264 đã nén, không
+mã hóa lại; trường hợp còn lại dùng đường OpenCV cũ. Quy tắc start/end frame,
+timeline raw, event và manifests giữ nguyên; byte/codec MP4 có thể đổi.
 Chi tiết tại [`kien_truc_web_local.md`](kien_truc_web_local.md).
 Web reviewer lưu GT đã duyệt riêng với artifact dự đoán. Module
 `parking_web.metrics` đọc hai phía và `clips.jsonl` trên timeline raw để
@@ -37,11 +66,22 @@ phơi sáng/tương phản và diện tích tương đối, rồi giữ các fra
 `plate_min_gap_ms`. PaddleOCR nhận dạng crop biển; consensus theo chuỗi chuẩn
 hóa tạo gợi ý HITL. Nhánh này ghi `plate_observations.jsonl` riêng, không sửa
 `events.jsonl` hay ground truth. Có thể chạy lại nhánh bằng `run_plate.py`.
+Plate detector hiện gom tối đa 8 crop xe liên tiếp trong cùng event để gọi YOLO
+một lần, trả kết quả theo đúng thứ tự crop rồi mới chấm chất lượng và chọn frame.
+OCR vẫn chạy trên các frame được chọn như trước. Lô giới hạn 8 crop để bộ nhớ
+không tăng theo cả video. Với crop có kích thước khác nhau, cách padding khi
+YOLO chạy batch có thể đổi box/confidence so với suy luận từng crop; vì vậy
+artifact gợi ý có thể khác dù model và raw không đổi.
 Plate và Condition dùng `SequentialFrameReader`: khi frame kế tiếp ở phía
 trước, OpenCV `grab` qua các frame giữa và chỉ `read` đúng frame cần dùng;
 chỉ seek khi quay về frame cũ. Cách này giữ nguyên pixel crop/box/timestamp
 nhưng tránh seek codec ở từng detection. Frame không được giữ hàng loạt trong
 RAM, nên bộ nhớ không tăng theo độ dài video.
+Plate Enrichment còn giữ tạm crop biển có padding 5% trong RAM, tối đa 64 MiB
+cho mỗi event, ngay khi frame nguồn được đọc để phát hiện biển. Sau khi chọn
+top-K, PaddleOCR dùng crop này thay vì seek ngược raw; candidate không được
+cache do vượt giới hạn vẫn đọc lại raw theo đường cũ. Cache không vào JSONL
+và không thay ảnh đầu vào OCR.
 Model biển số và OCR đều đổi được qua cấu hình. Nhánh `Condition Enrichment`
 tùy chọn đọc lại raw frame đại diện cho từng event (ưu tiên frame đã chọn ở
 Plate Enrichment, fallback sang detection của track), đo sáng/độ nét bằng CV,
@@ -63,11 +103,17 @@ Transformers nạp TensorFlow/h5py không cần thiết và xung đột ABI NumP
 Code hiện tại chạy offline cho **một camera và một làn trong mỗi run**:
 
 ```text
-OpenCV decode → sample frame → YOLO26s (car/motorcycle/bicycle) → ByteTrack
+OpenCV tuần tự: `read()` frame được lấy mẫu, `grab()` frame bỏ qua
+→ YOLO26s (car/motorcycle/bicycle) → ByteTrack
 → EventEngine (ROI/line corridor/motion gate/crossing/grace) → segment planner
 → JSONL manifests + detections.jsonl → materialize từng MP4 tùy chọn
 → nối các MP4 theo thời gian nguồn thành clip_final.mp4
 ```
+
+Lịch lấy mẫu vẫn dựa vào `frame_index/source_fps`; chỉ thay cách OpenCV đi
+qua frame không đưa vào detector. `grab()` không tạo ảnh BGR cho frame bỏ qua,
+nhưng decoder vẫn phải đi qua video tuần tự. Các nhánh xuất MP4, OCR và
+CV–VLM tiếp tục đọc raw theo cách riêng, không dùng ảnh từ vòng detector.
 
 Giao diện PyQt6 và CLI nằm trong `src/parking_step1/`; GUI có trình phát
 nhúng dùng OpenCV/QTimer để chọn event, tua tới event start và xem MP4 hoặc

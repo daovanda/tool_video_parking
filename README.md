@@ -4,13 +4,43 @@ Bản pilot hiện xử lý **một camera/một làn trong mỗi lần chạy**
 `car`, `motorcycle` và `bicycle`. `lane_id` và `direction` (`ENTRY` hoặc `EXIT`) được
 nhập từ camera registry; Bước 1 không ghép lượt vào với lượt ra.
 
-## Lấy mã nguồn và chuẩn bị dữ liệu
+## Chuẩn bị máy mới (Windows PowerShell)
+
+Cần **Python 3.12**, **Node.js 22**, Git, kết nối mạng khi cài thư viện và tải
+model. Cấu hình này đã dùng để kiểm thử trên Windows; CPU chạy được nhưng các
+nhánh OCR/VLM có thể mất nhiều phút. Nếu repository private, đồng nghiệp cần
+được cấp quyền truy cập GitHub trước khi clone. Không commit hoặc gửi kèm
+video, dữ liệu review, weights và token; mỗi máy chuẩn bị các file đó riêng.
 
 ```powershell
 git clone https://github.com/daovanda/tool_video_parking.git
 cd tool_video_parking
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
+cd frontend
+npm ci
+cd ..
 ```
+
+Nếu PowerShell chặn `Activate.ps1`, có thể gọi trực tiếp
+`.\.venv\Scripts\python.exe` thay cho `python` trong các lệnh bên dưới.
+`requirements.txt` gồm YOLO/ByteTrack, OpenCV, FFmpeg CPU, FastAPI, PyQt và
+thư viện xuất Excel. Frontend dùng `frontend/package-lock.json` qua `npm ci`.
+
+Để thử **toàn bộ** các nhánh gợi ý, sau khi cài requirements cơ bản chạy:
+
+```powershell
+python -m pip install -r requirements-plate.txt -r requirements-conditions.txt
+```
+
+`requirements-plate.txt` cài PaddlePaddle/PaddleOCR và ràng buộc NumPy phù
+hợp; `requirements-conditions.txt` cài PyTorch/Transformers/Hugging Face.
+Hai nhánh này là tùy chọn: không cài thì phải tắt gợi ý biển số và CV–VLM
+trong cấu hình run. Model OCR Latin được Paddle tải/cache ở lần dùng đầu.
+
+## Model và video trên máy mới
 
 Repository chỉ chứa **mã nguồn, frontend, test, cấu hình mẫu và tài liệu**.
 Video raw, output của các run, database local, weights/model và file debug
@@ -26,10 +56,14 @@ không được đưa lên GitHub. Sau khi clone:
 
   Có thể truyền đường dẫn weights khác qua `--model`/giao diện. Nếu không
   dùng gợi ý biển số thì không cần tải `yolov8n-oiv7.pt`.
-- Nếu bật gợi ý biển số, cài `requirements-plate.txt` và chuẩn bị weights
-  `yolov8n-oiv7.pt` như lệnh trên hoặc đổi sang model biển số tương thích.
-- Nếu bật điều kiện CV–VLM, cài `requirements-conditions.txt` và tải
-  Qwen3-VL-2B-Instruct theo hướng dẫn ở mục dưới.
+- Nếu bật điều kiện CV–VLM, tải Qwen3-VL-2B-Instruct vào đúng vị trí mặc định:
+
+  ```powershell
+  hf download Qwen/Qwen3-VL-2B-Instruct --local-dir models/Qwen3-VL-2B-Instruct
+  ```
+
+  Lệnh `hf` có sau khi cài `requirements-conditions.txt`. Model lớn; cần đủ
+  dung lượng lưu trữ và RAM. Có thể đổi đường dẫn qua cấu hình run.
 
 Các thư mục `outputs/`, `web_data/`, `models/`, `.cache/` và
 `frontend/node_modules/` được tạo hoặc tải trên từng máy; chúng không phải
@@ -38,12 +72,35 @@ mẫu: đổi `source` sang video của bạn trước khi chạy.
 
 ## Chạy web local (khuyến nghị)
 
-Web local gồm backend FastAPI và frontend React tách thư mục. Cài và build:
+**Cách 1 — hai terminal, phù hợp chạy thử và sửa giao diện.** Mở hai cửa sổ
+PowerShell tại **thư mục cha** chứa thư mục đã clone, bật `.venv` ở cửa sổ
+backend:
 
 ```powershell
-python -m pip install -r requirements.txt
+# Terminal 1: backend
+cd tool_video_parking
+.\.venv\Scripts\Activate.ps1
+python run_web_api.py
+```
+
+```powershell
+# Terminal 2: frontend
+cd tool_video_parking\frontend
+npm run dev
+```
+
+Mở `http://127.0.0.1:5173/`. FE proxy `/api` tới BE ở
+`http://127.0.0.1:8000/`. Hai lệnh cần chạy đồng thời; nhấn `Ctrl+C` ở từng
+terminal để dừng. Nếu đã đứng trong thư mục dự án thì bỏ dòng `cd` tương ứng.
+
+**Cách 2 — một terminal, backend phục vụ bản FE đã build:**
+
+Chạy từ thư mục cha chứa repository:
+
+```powershell
+cd tool_video_parking
+.\.venv\Scripts\Activate.ps1
 cd frontend
-npm install
 npm run build
 cd ..
 python run_web_api.py
@@ -54,27 +111,14 @@ trên cùng port. Giao diện có **Tổng quan**, **Kho video**, **Chạy phân
 **Kết quả & duyệt**, **Đánh giá**, **Tài liệu** và **Cài đặt**. Dữ liệu local
 nằm trong `web_data/` và bị gitignore.
 
-Khi phát triển frontend riêng:
-
-```powershell
-python run_web_api.py
-cd frontend
-npm run dev
-```
-
-Mở `http://127.0.0.1:5173`; Vite proxy `/api` sang backend port 8000. Chi
-tiết API, worker và storage xem
+Chi tiết API, worker và storage xem
 [`docs/kien_truc_web_local.md`](docs/kien_truc_web_local.md).
 
-## Cài đặt
-
-```powershell
-python -m pip install -r requirements.txt
-```
-
-Đặt file weights `yolo26s.pt` ở root repository hoặc truyền đường dẫn bằng
-`--model`. Ultralytics sẽ dùng GPU nếu môi trường có CUDA; CPU vẫn chạy được
-nhưng chậm hơn.
+Sau khi mở web: vào **Kho video** để tải video raw, vào **Chạy phân tích** để
+chọn video, camera/làn/chiều (`ENTRY` hoặc `EXIT`), vẽ ROI/line nếu cần và
+chạy. Có thể tắt OCR/CV–VLM khi chưa cài model tùy chọn. Xem event ở **Kết quả
+& duyệt**, chỉnh GT và duyệt trước khi xem metric ở **Đánh giá**. Run, GT và
+video đã tải nằm trong `web_data/`; output lớn nằm ngoài Git.
 
 ## Chạy giao diện local
 

@@ -47,6 +47,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--model", default="yolo26s.pt")
     parser.add_argument("--imgsz", type=int, default=960, help="Kích thước cạnh ảnh đưa vào detector")
     parser.add_argument("--sample-fps", type=float, default=10.0)
+    parser.add_argument("--motion-gate", action="store_true",
+                        help="Bật bộ lọc chuyển động MOG2 bảo thủ trước YOLO")
     parser.add_argument("--conf", type=float, default=0.12)
     parser.add_argument("--candidate-hits", type=int, default=2)
     parser.add_argument("--min-motion-distance", type=float, default=0.015,
@@ -86,6 +88,7 @@ def _config_from_args(args: argparse.Namespace) -> RunConfig:
         model=args.model,
         image_size=args.imgsz,
         sample_fps=args.sample_fps,
+        motion_gate_enabled=args.motion_gate,
         confidence=args.conf,
         candidate_hits=args.candidate_hits,
         min_motion_distance=args.min_motion_distance,

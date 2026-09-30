@@ -28,6 +28,67 @@ class SyntheticDetector:
 
 
 class Step1LogicTests(unittest.TestCase):
+    def test_pipeline_grabs_unsampled_frames_without_changing_detector_input(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "sampled.mp4"
+            writer = cv2.VideoWriter(str(source), cv2.VideoWriter_fourcc(*"mp4v"), 30, (32, 24))
+            for index in range(30):
+                writer.write(np.full((24, 32, 3), index * 8, dtype=np.uint8))
+            writer.release()
+            self.assertTrue(source.is_file())
+
+            class RecordingDetector(SyntheticDetector):
+                def __init__(self):
+                    super().__init__([Detection(1, "car", .9, (4, 4, 20, 20))])
+                    self.frames = []
+
+                def infer(self, frame):
+                    self.frames.append(frame.copy())
+                    return super().infer(frame)
+
+            original_capture = cv2.VideoCapture
+            capture_spies = []
+
+            class CaptureSpy:
+                def __init__(self, path):
+                    self.capture = original_capture(path)
+                    self.grab_calls = 0
+                    capture_spies.append(self)
+
+                def grab(self):
+                    self.grab_calls += 1
+                    return self.capture.grab()
+
+                def __getattr__(self, name):
+                    return getattr(self.capture, name)
+
+            for sample_fps, expected_indices in ((10, list(range(0, 30, 3))),
+                                                 (60, list(range(30)))):
+                with self.subTest(sample_fps=sample_fps):
+                    detector = RecordingDetector()
+                    config = RunConfig(CameraConfig("cam", "lane", "ENTRY"), str(source),
+                                       str(root / f"out-{sample_fps}"), sample_fps=sample_fps,
+                                       candidate_hits=1, min_motion_distance=0, make_clips=False)
+                    with patch("parking_step1.pipeline.cv2.VideoCapture", side_effect=CaptureSpy):
+                        result = run_pipeline(config, detector=detector)
+                    self.assertEqual(capture_spies[-1].grab_calls, 30 - len(expected_indices))
+                    self.assertEqual(result["run"]["decoded_frames"], 30)
+                    self.assertEqual(result["run"]["sampled_frames"], len(expected_indices))
+                    records = load_jsonl(Path(result["run_dir"]) / "detections.jsonl")
+                    self.assertEqual([row["frame_index"] for row in records], expected_indices)
+                    self.assertEqual([row["timestamp_ms"] for row in records],
+                                     [round(index * 1000 / 30) for index in expected_indices])
+                    direct = cv2.VideoCapture(str(source))
+                    try:
+                        for index in range(30):
+                            ok, frame = direct.read()
+                            self.assertTrue(ok)
+                            if index in expected_indices:
+                                np.testing.assert_array_equal(detector.frames[expected_indices.index(index)], frame)
+                    finally:
+                        direct.release()
+
     def test_sequential_reader_returns_same_frames_as_direct_seek(self):
         with tempfile.TemporaryDirectory() as directory:
             source = Path(directory) / "frames.mp4"
@@ -229,7 +290,7 @@ class Step1LogicTests(unittest.TestCase):
             self.assertEqual(result["plate_observations"][0]["plate_applicability"], "not_applicable")
             self.assertEqual(result["condition_suggestions"][0]["condition_status"], "not_applicable")
             runtime = json.loads((Path(result["run_dir"]) / "runtime.json").read_text(encoding="utf-8"))
-            self.assertEqual(runtime["schema_version"], "0.3.0")
+            self.assertEqual(runtime["schema_version"], "0.4.0")
             self.assertIsNotNone(runtime["ocr_elapsed_seconds"])
             self.assertIsNotNone(runtime["condition_elapsed_seconds"])
             self.assertGreaterEqual(runtime["elapsed_seconds"], runtime["core_elapsed_seconds"])
@@ -315,6 +376,59 @@ class Step1LogicTests(unittest.TestCase):
             capture.release()
             self.assertGreater(colors[0][2], colors[0][1])
             self.assertGreater(colors[1][1], colors[1][2])
+
+    def test_ffmpeg_partial_clips_concat_without_reencoding(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source.mp4"
+            writer = cv2.VideoWriter(str(source), cv2.VideoWriter_fourcc(*"mp4v"), 10, (32, 24))
+            for index in range(50):
+                writer.write(np.full((24, 32, 3), index * 4, dtype=np.uint8))
+            writer.release()
+            info = video_info(source)
+            segments = [
+                {"clip_id": "late", "start_ms": 3000, "end_ms": 4000},
+                {"clip_id": "early", "start_ms": 500, "end_ms": 1500},
+            ]
+            files = {}
+            for segment in segments:
+                path = root / f"{segment['clip_id']}.mp4"
+                result = materialize_clip(source, path, segment["start_ms"], segment["end_ms"], info)
+                self.assertEqual(result["encoder"], "ffmpeg_libx264")
+                self.assertEqual(result["frame_count"], 10)
+                segment["output_frame_count"] = result["frame_count"]
+                files[segment["clip_id"]] = path
+            final = root / "final.mp4"
+            result = materialize_final_clip(source, final, segments, info, segment_files=files)
+            self.assertEqual(result["frame_count"], 20)
+            self.assertEqual([item["clip_id"] for item in result["timeline_mapping"]],
+                             ["early", "late"])
+            cap = cv2.VideoCapture(str(final))
+            self.assertEqual(round(cap.get(cv2.CAP_PROP_FRAME_COUNT)), 20)
+            self.assertAlmostEqual(cap.get(cv2.CAP_PROP_FPS), 10, places=2)
+            cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+            ok, first = cap.read()
+            self.assertTrue(ok)
+            cap.set(cv2.CAP_PROP_POS_FRAMES, 10)
+            ok, second = cap.read()
+            self.assertTrue(ok)
+            cap.release()
+            self.assertLess(first.mean(), second.mean())
+
+    def test_clip_export_falls_back_when_ffmpeg_unavailable(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source.mp4"
+            writer = cv2.VideoWriter(str(source), cv2.VideoWriter_fourcc(*"mp4v"), 10, (32, 24))
+            for index in range(20):
+                writer.write(np.full((24, 32, 3), index * 5, dtype=np.uint8))
+            writer.release()
+            with patch("parking_step1.pipeline._ffmpeg_executable", return_value=None):
+                result = materialize_clip(source, root / "partial.mp4", 500, 1500,
+                                          video_info(source))
+            self.assertEqual(result["encoder"], "opencv_mp4v")
+            self.assertEqual(result["frame_count"], 10)
+            self.assertTrue(result["decodable"])
 
     def test_clip_export_stops_when_cancelled(self):
         with tempfile.TemporaryDirectory() as directory:

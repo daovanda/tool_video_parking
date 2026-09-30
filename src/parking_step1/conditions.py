@@ -293,7 +293,8 @@ def run_condition_analysis(run_dir: str | Path, config, *, vlm=None,
         capture.release()
     artifact = run_dir / "condition_suggestions.jsonl"
     save_jsonl(artifact, output)
-    run["schema_version"] = "0.9.0"
+    run["schema_version"] = max(run.get("schema_version", "0.0.0"), "0.9.0",
+                                key=lambda version: tuple(map(int, version.split("."))))
     run.setdefault("artifacts", {})["condition_suggestions_uri"] = artifact.name
     run["artifacts"]["condition_event_count"] = len(output)
     (run_dir / "run.json").write_text(json.dumps(run, ensure_ascii=False, indent=2), encoding="utf-8")

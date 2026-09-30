@@ -1,7 +1,314 @@
 # Trạng thái triển khai
 
-Ngày cập nhật: **24/09/2026** — phạm vi: pilot Bước 1, chạy offline từng
+Ngày cập nhật: **30/09/2026** — phạm vi: pilot Bước 1, chạy offline từng
 camera/làn.
+
+## Cập nhật 30/09/2026: chuẩn bị chạy trên máy khác và sửa truyền cấu hình MOG2
+
+- `README.md` ghi rõ Python 3.12/Node.js 22, cách tạo venv, cài dependency
+  nền và hai nhánh tùy chọn, tải weights/video riêng, chạy BE/FE bằng hai
+  terminal hoặc build FE để BE phục vụ. `requirements.txt` chứa thư viện
+  FFmpeg CPU; `requirements-plate.txt` và `requirements-conditions.txt` chỉ
+  cần khi bật các nhánh tương ứng. Weights, video, GT/output local không có
+  trong Git; máy mới phải tự chuẩn bị. Không đổi luồng suy luận.
+- `src/parking_web/api.py` khai báo/validate sáu trường `motion_gate_*` trong
+  `RunPayload` và chuyển chúng sang `RunConfig`. Trước thay đổi này, FE gửi
+  `motion_gate_enabled=true` nhưng Pydantic bỏ trường, nên web vẫn chạy gate
+  tắt; CLI/GUI không bị ảnh hưởng. Cấu hình cũ thiếu trường vẫn mặc định tắt.
+  Luồng thực tế sau sửa: raw → lấy mẫu → MOG2 tùy chọn → YOLO/ByteTrack →
+  event/clip → OCR tùy chọn → CV–VLM tùy chọn → artifact/web review.
+- Kiểm thử 30/09: `$env:PYTHONPATH='src'; python -m unittest discover -s
+  tests -q`: **63 tests, OK**, gồm xác minh API chuyển MOG2 và chặn ngưỡng
+  probe bằng 0. `node --experimental-strip-types --test
+  frontend/tests/reviewPriority.test.mjs`: **5/5 đạt**. `npx tsc --noEmit
+  -p tsconfig.json` trong `frontend`: **đạt**. `npm run build`: **đạt** sau
+  khi cấp quyền ghi cho Vite; trước đó sandbox trả `EPERM` khi ghi file tạm
+  và thư mục build. `git diff --check`: **đạt**.
+
+## Cập nhật 29/09/2026: MOG2 tùy chọn trước YOLO xe
+
+- `src/parking_step1/motion_gate.py` áp MOG2 trên frame đã lấy mẫu và thu
+  nhỏ, xét tiền cảnh trong ROI (hoặc toàn frame). `pipeline.run_pipeline`
+  chỉ bỏ qua YOLO khi không có event/track đang mở, đã qua warmup và hold,
+  chưa tới nhịp dò định kỳ. EventEngine và timeline vẫn nhận mọi frame đã
+  lấy mẫu; MOG2 không thay YOLO/ByteTrack hoặc xử lý OCR/VLM.
+- Web `RunPayload` và trang tạo run, PyQt GUI, CLI (`--motion-gate`) và
+  `RunConfig` có công tắc bật; mặc định tắt cho tương thích run cũ. JSON
+  config có thể chỉnh thêm kích thước MOG2, ngưỡng diện tích, warmup, hold,
+  probe. Trang kết quả hiển thị số frame YOLO xử lý/bỏ qua khi bật MOG2.
+  Nếu MOG2 báo `cv2.error`, pipeline fail-open sang YOLO tất cả frame
+  còn lại. Mỗi run giữ model nền riêng.
+- Run/event/clip schema `0.10.0`; `run.json` thêm `detector_frames` và
+  `motion_gate` telemetry, `detections.jsonl` thêm `detector_skipped`, runtime
+  schema `0.4.0` thêm `motion_gate_seconds`. Run cũ đọc được với default gate
+  tắt; raw, clip, GT, OCR/VLM không đổi. Đây là thay đổi hành vi chỉ khi bật.
+- Video thực 17,395 giây `video_test1.mp4`: run MOG2 ở
+  `outputs/mog2_validation/step1-20260929T100014746973Z` cho **4 event**
+  cùng `start_ms`, `end_ms`, `crossed` với run gốc. MOG2 gọi YOLO cả **174/174**
+  frame nên không tăng tốc ở clip ngắn có xe gần liên tục; gate mất 3,09 s.
+  `detections.jsonl` bằng run gốc ở 174 frame sau khi bỏ field mới
+  `detector_skipped`; segment ảo cùng `[0,17395]` ms.
+- Video tĩnh 20 s/200 frame (MP4 thật, YOLO26s thật): baseline gọi YOLO
+  **200** frame, mất **33,188 s** phần detector; gate gọi YOLO **52** frame,
+  bỏ **148** frame, YOLO **8,764 s** + MOG2 **0,142 s** = **8,906 s**.
+  Cả hai không tạo event. Artifact ở `outputs/mog2_validation/idle-baseline/`
+  và `outputs/mog2_validation/idle-gated/`. Không ngoại suy phần trăm này
+  cho mọi camera; khi có xe gần liên tục, gate không mang lợi ích.
+- Run đầy đủ bật xuất clip + OCR + CV–VLM trên raw 17,395 s:
+  `outputs/mog2_full_validation/step1-20260929T100559796416Z`, tổng
+  **199,469 s** ở lần đo này (khác tải CPU nên không so trực tiếp với run
+  baseline 281,797 s). So với run gốc, 4 event bằng nhau mọi field trừ
+  `run_id`/schema, 174 detection bằng nhau trừ field skip mới, clip virtual
+  cùng ranh giới/frame count, `plate_observations.jsonl` và
+  `condition_suggestions.jsonl` bằng nhau toàn bộ sau khi bỏ `run_id`.
+  Bốn biển vẫn ZPN720/HT1748/MLZ106/BSA788; bốn điều kiện vẫn `good`.
+  Clip final 522 frame/30,008 FPS giải mã được, hash pixel frame đầu và cuối
+  giống baseline. `run.json.schema_version=0.10.0` được Plate/Condition giữ
+  nguyên; runtime schema `0.4.0`.
+- Test `$env:PYTHONPATH='src'; python -m unittest discover -s tests -q`:
+  **63 tests, OK**, gồm clip tổng hợp idle→xe qua line→idle giữ nguyên event,
+  ROI chỉ xét chuyển động trong vùng, probe khi yên, track mở vẫn gọi YOLO,
+  cấu hình lỗi, cấu hình cũ và MOG2 lỗi fail-open.
+  `tsc --noEmit` và Vite build ra thư mục writable: **đạt**. Còn cần GT đa
+  dạng camera/ánh sáng để xác nhận recall trước khi bật gate mặc định.
+
+## Cập nhật 28/09/2026: hàng nút thao tác GT không xuống dòng
+
+- Bốn nút `Thêm hàng GT`, `Xuất Excel`, `Cập nhật`, `Duyệt`/`Đã duyệt`
+  trong màn hình chỉnh sửa GT nằm trên cùng một hàng; dòng hướng dẫn nhỏ
+  về GT cho xe bỏ sót đã bỏ khỏi khu vực thao tác.
+  Khi panel hẹp, hàng nút cuộn ngang thay vì đẩy nút cuối xuống dòng.
+  Chỉ thay bố cục `frontend/src/main.tsx` và `frontend/src/styles.css`,
+  không đổi trạng thái hay API duyệt.
+- Kiểm thử `$env:PYTHONPATH='src'; python -m unittest discover -s tests -q`:
+  **59 tests, OK**; `tsc --noEmit` và Vite build với output writable: **đạt**.
+  Sau khi bỏ dòng hướng dẫn, chạy lại `tsc --noEmit` và Vite build: **đạt**.
+
+## Cập nhật 28/09/2026: duyệt ngay trong màn hình chỉnh sửa GT
+
+- Màn `Kết quả & duyệt → Chỉnh sửa` thêm nút `Duyệt` cạnh `Cập nhật`.
+  Nếu form có thay đổi hoặc gợi ý GT chưa từng lưu, nút hiện `Cập nhật & duyệt`:
+  frontend gọi `PUT /annotations` trước, chỉ gọi `POST /review` khi lưu thành
+  công. Trường hợp GT đã lưu dùng `POST /review` trực tiếp. Nút hiện
+  `Đã duyệt` và vô hiệu khi run đã duyệt, form không thay đổi.
+- Sau khi duyệt, frontend tải lại result và danh sách run nên badge trạng
+  thái, hàng GT và nút phản ánh dữ liệu đã lưu. Dữ liệu không hợp lệ được
+  backend báo lỗi, không chuyển `REVIEWED`. Không đổi schema hay luật duyệt
+  backend; chỉ thêm đường thao tác trong `frontend/src/main.tsx`.
+- Kiểm thử `$env:PYTHONPATH='src'; python -m unittest discover -s tests -q`:
+  **59 tests, OK**; TypeScript `tsc --noEmit` và Vite build (dùng
+  `--configLoader=runner --outDir=<thư mục writable>`) đều **đạt**.
+
+## Cập nhật 28/09/2026: tua event tới frame tốt nhất trong trang duyệt
+
+- Trang `Kết quả & duyệt → Chỉnh sửa` dùng `GET
+  /api/runs/{id}/events/{event_id}/best-frame?start_ms=...&end_ms=...` khi
+  chọn hàng. Backend gọi lại `_best_frame` của xuất Excel trên đúng khoảng GT
+  hiện có trong form: ưu tiên observation biển theo điểm tổng hợp; nếu không
+  có thì detection xe confidence cao nhất của đúng track; GT thủ công hoặc
+  thiếu bằng chứng lấy giữa khoảng. Frontend tua video raw tới timestamp được
+  trả về, giữ overlay và đoạn vàng theo thời gian event; bấm lại cùng hàng
+  sẽ tua lại. Nếu API lỗi, player về đầu khoảng.
+- Chỉ thay API đọc và tương tác trình xem; không sửa artifact, GT hoặc
+  thuật toán chọn frame Excel. `src/parking_web/api.py`,
+  `frontend/src/api.ts`, `frontend/src/main.tsx` là các file chính.
+- Kiểm thử `$env:PYTHONPATH='src'; python -m unittest discover -s tests -q`:
+  **59 tests, OK**; test API gồm frame biển, fallback giữa khoảng, GT thủ
+  công và input không hợp lệ. `tsc --noEmit` đạt trong `npm run build`.
+  `vite build --configLoader=runner --outDir=<thư mục writable>` cũng đạt.
+  Lệnh build mặc định bị quyền sandbox chặn khi ghi vào
+  `node_modules/.vite-temp`/`frontend/dist`; FE dev đang chạy. API trên run
+  COMPLETED thực tế trả timestamp frame trong khoảng event.
+
+## Cập nhật 28/09/2026: thử số luồng CPU VLM và ONNX/OpenVINO cho YOLO xe
+
+- **Chỉ benchmark, chưa đổi backend sản phẩm.** Cùng raw `video_test1.mp4`
+  17,395 s/522 frame, detector 10 FPS/174 frame, YOLO26s 960 px,
+  ByteTrack, ROI/line và EventEngine hiện tại. Các lần đo YOLO tắt xuất clip,
+  OCR và CV–VLM để cô lập phát hiện/tracking. CPU máy thử là Intel Core
+  i7-12700H, PyTorch CPU mặc định 14 luồng, không có CUDA.
+- VLM Qwen3-VL-2B-Instruct chạy trên cùng contact sheet 540×960 của event
+  đầu: 14 luồng **17,213 s**, 8 luồng **17,792 s**, 4 luồng **24,360 s**.
+  Phép lặp cùng ảnh: 14/20/8/14 luồng lần lượt **15,366/14,515/17,281/
+  16,059 s**, đều trả `plate_readable=true`, `conditions=[]`. Chạy cả 4 event
+  với model đã nạp: 14 luồng **65,076 s** (VLM generation 63,187 s), 20
+  luồng **64,013 s** (generation 61,984 s); hai
+  `condition_suggestions.jsonl` bằng nhau từng byte (SHA-256
+  `ff2491f90b02f39ee5180bab9f04d12e82c77be8a9125eb6fddc84cc58c3cac3`).
+  Chênh lệch ~1 s trên 4 event quá nhỏ so với biến động CPU; giữ mặc định
+  14 luồng, không thêm cấu hình tự chọn luồng lúc này.
+- Export cùng `yolo26s.pt` sang ONNX/OpenVINO FP32, không quantize. Khi
+  export vuông cố định 960×960, ONNX/OpenVINO lần lượt mất **33,402/18,718
+  s** cho YOLO+ByteTrack so với PyTorch **29,246 s**, nhưng sinh 869/871
+  detection so với 833 và kéo dài event đầu từ `end_ms=4132` lên `4732`
+  (tăng 0,6 giây). Không dùng
+  đường này vì input preprocessing/track thay đổi.
+- Export **dynamic** khôi phục cùng 4 mốc event và track ID của PyTorch,
+  cùng 833 detection, nhưng YOLO+ByteTrack mất **38,377 s** với ONNX và
+  **43,963 s** với OpenVINO. Không có lợi ích tốc độ trên video này.
+- Export **tĩnh hình chữ nhật 544×960**, đúng tensor sau letterbox của video
+  nguồn, rồi chạy adapter với `imgsz=(544,960)`: ONNX mất **17,752 s**, cả
+  833 detection khớp theo track/frame/class với PyTorch, lệch tọa độ box
+  tối đa 0,001 px và confidence tối đa 0,00001; 4 event và mốc thời gian
+  giống hệt. OpenVINO mất **15,718 s**, 832 detection (thiếu một box ở frame
+  484), box có thể lệch tới 44,541 px dù 4 event/mốc thời gian vẫn khớp.
+  Vì dạng tĩnh 544×960 gắn với tỷ lệ khung hình camera này, chưa dùng mặc
+  định cho các video/camera khác; cấu hình pipeline hiện nhận `image_size`
+  scalar 960 nên muốn dùng model tĩnh hình chữ nhật cần adapter/config rõ
+  ràng và kiểm chứng trên nhiều video/GT.
+- Lệnh export thử: `YOLO('yolo26s.pt').export(format='onnx',
+  imgsz=(544,960), batch=1, dynamic=False, simplify=False)` hoặc
+  `format='openvino'` (bỏ `simplify`). Khi benchmark, tạo
+  `YoloByteTrack(path_export, (544,960), 0.12)` và truyền qua tham số
+  `detector` của `run_pipeline` với `make_clips=False`, OCR/VLM tắt.
+  Weights thử nằm ở `outputs/backend_benchmark/` (ignored), không được
+  đóng gói hay tự động tải trong ứng dụng. Môi trường thử đã cài `onnx`
+  1.23.0 và `openvino` 2026.4.0; `requirements.txt` không thêm các
+  dependency benchmark này. Không thay schema/artifact sản phẩm.
+- Kiểm tra sau benchmark: `$env:PYTHONPATH='src'; python -m unittest
+  discover -s tests -q` → **59 tests, OK**; `git diff --check` → **OK**.
+
+## Cập nhật 28/09/2026: tránh đọc lại raw cho crop OCR đã chọn
+
+- `src/parking_step1/plate.py` giữ tạm crop biển có padding 5% khi frame còn
+  trong bộ nhớ và dùng lại cho OCR của top-K frame. Bộ nhớ crop giới hạn
+  **64 MiB/event**; nếu vượt giới hạn thì frame đó vẫn được đọc lại từ raw.
+  Không đổi box, chất lượng frame, thuật toán chọn, ảnh pixel OCR hay schema.
+- Trên cùng bản sao manifest của run 4 event, cùng YOLO batch và PaddleOCR:
+  `outputs/plate_cache_before` mất 55,063 s (seek/giải mã 6,262 s),
+  `outputs/plate_cache_after` mất 53,219 s (seek/giải mã 3,988 s).
+  `plate_observations.jsonl` hai lần có SHA-256 **giống hệt**; 4 consensus
+  vẫn là ZPN720, HT1748, MLZ106, BSA788. Tổng thời gian và từng pha chịu
+  biến động tải CPU, nên không suy ra mức tăng tốc toàn pipeline từ hai run.
+- Kiểm thử `PYTHONPATH=src python -m unittest discover -s tests -q`:
+  **59 tests, OK**; test OCR cache so sánh từng pixel crop với đường đọc lại
+  raw khi ép giới hạn cache bằng 0. Run đầy đủ mới là
+  `outputs/current_profile_validation/step1-20260928T042848514811Z` trên
+  cùng raw 17,395 s/522 frame, 174 frame detector: **281,797 s** tổng;
+  lõi 45,813 s (nạp 2,516; đọc 3,401; YOLO+ByteTrack 34,444;
+  xuất segment 4,703; final 0,265); OCR 54,359 s (nạp 13,844;
+  đọc 4,824; phát hiện biển 33,157; OCR chữ 0,983); CV–VLM 181,609 s
+  (nạp 14,750; đọc 3,315; CV/contact sheet 0,530; VLM 162,671).
+  Cùng 4 event, 1 clip; `detections.jsonl`, `events.jsonl`, `clips.jsonl`
+  bằng run trước sau khi bỏ run ID/hash clip. Plate artifact bằng bản chạy
+  batch+cache trước đó sau khi bỏ run ID; 4 chuỗi biển giữ nguyên. Condition
+  có cùng 4 `good` và `conditions=[]`; JSONL VLM không bằng từng byte. MP4
+  dùng codec mới, file segment 55.486.899 byte so với 74.274.732 byte cũ.
+  Run cũ 1.761,344 s chịu tải CPU khác; chênh lệch tổng không thể gán riêng
+  cho một tối ưu. Kiểm thử cuối: 59 tests OK và `git diff --check` không lỗi.
+
+## Cập nhật 28/09/2026: xuất clip MP4 nhanh hơn bằng CPU
+
+- `src/parking_step1/pipeline.py` ưu tiên FFmpeg/libx264 CPU (`ultrafast`,
+  H.264/yuv420p, `faststart`) để xuất **đoạn cắt một phần raw** theo đúng
+  start/end frame hiện có. Đầu ra phải decode được và có đúng frame count/FPS;
+  clip bắt đầu muộn seek gần frame đầu và đối chiếu frame đầu/cuối với raw.
+  Seek lệch thì thử lại bằng cách đếm frame từ đầu; FFmpeg không có hoặc đầu
+  ra không hợp lệ thì dùng lại OpenCV `mp4v`.
+  Hủy run kiểm tra tiến trình FFmpeg và dừng encoder. Một segment final vẫn
+  sao chép MP4 segment; nhiều segment đều mã hóa bằng FFmpeg thì nối nhanh bằng
+  concat stream copy, nếu không dùng lại đường OpenCV. Không thay detector,
+  EventEngine, timeline, manifest hay schema; codec/hash và ảnh giải nén có
+  thể khác run cũ vì bộ mã hóa khác.
+- Trên cùng raw 3060×1664, 30,008 FPS, đoạn frame 90–330 (241 frame,
+  8,031 s): OpenCV `mp4v` mất **12,280 s**; FFmpeg/libx264 ultrafast trong
+  đường tích hợp có seek và xác minh ranh giới mất **2,984 s** trong lần đo
+  cuối trên máy thử. Phép đo trước khi thêm xác minh mất 1,680 s; hai phép đo
+  diễn ra ở các thời điểm tải CPU khác nhau, không dùng để tính riêng chi phí
+  xác minh. Output FFmpeg giải mã đủ 241
+  frame, FPS 30,008, duration 8,031 s. Frame đầu/cuối gần frame nguồn 90/330
+  hơn frame kề về sai khác pixel trung bình; sai khác ảnh với frame nguồn lần
+  lượt 0,930/1,814 mức xám do nén. Đây là số đo xuất một clip, không phải tốc
+  độ toàn pipeline; CPU có thể biến động theo tải máy.
+- Hai đoạn 90 frame cách xa nhau được xuất bằng FFmpeg rồi concat stream copy:
+  nối **0,178 s**, final 180 frame, FPS 30,008, duration 5,998 s; OpenCV
+  giải mã đủ 180 frame. Khi gọi đường tích hợp (gồm xác minh và hash), final
+  mất **0,482 s** trên lần đo riêng. Edge phát qua HTTP được cả clip 241 frame
+  và final 180 frame: `readyState=4`, duration lần lượt 8,031/5,998 s,
+  không có lỗi video và `currentTime` tăng sau `play()`. Chưa đo nguồn VFR,
+  nhiều codec/độ phân giải khác; pipeline vẫn giả định nguồn CFR như trước.
+- Dependency mới `imageio-ffmpeg>=0.6` trong `requirements.txt` cung cấp
+  FFmpeg binary cho môi trường Windows/CPU; lệnh `ffmpeg` trên PATH cũng được
+  dùng nếu package thiếu. Đã cài `imageio-ffmpeg 0.6.0` trong môi trường thử.
+- Kiểm thử: `PYTHONPATH=src python -m unittest discover -s tests -q`:
+  **59 tests, OK**; test mới xác nhận hai đoạn cắt được nối đúng thứ tự, đủ
+  frame, đúng FPS, giải mã được và fallback OpenCV khi thiếu FFmpeg. Chưa chạy
+  lại toàn pipeline YOLO/OCR/VLM;
+  kết quả tốc độ tổng run thực tế cần đo trên run mới.
+
+## Cập nhật 28/09/2026: phát hiện biển số theo batch crop xe
+
+- `src/parking_step1/plate.py` gom tối đa 8 crop xe liên tiếp trong mỗi event
+  rồi gọi YOLO biển số một lần; kết quả được ánh xạ lại theo đúng thứ tự crop.
+  Chỉ giữ 8 crop trong bộ nhớ và vẫn đọc raw theo `SequentialFrameReader`.
+  Chấm chất lượng, chọn frame, PaddleOCR, consensus và schema artifact giữ
+  cùng quy tắc. Detector tùy biến chỉ có `detect()` vẫn chạy theo từng crop.
+- Microbenchmark trên 24 crop thật từ run
+  `outputs/grab_validation/step1-20260927T112003620791Z`: phát hiện tuần tự
+  **4,359 s**, batch 8 **1,984 s** trên máy này. Đây chỉ là thời gian YOLO
+  của 24 crop, không phải thời gian toàn run. Số box tương ứng có 1/24 crop
+  khác về số lượng; batch không bảo đảm artifact giống từng byte.
+- Chạy lại Plate Enrichment thật (YOLO + PaddleOCR) trên bản sao manifest của
+  cùng run tại `outputs/batch_plate_validation`: cả 4 consensus text vẫn là
+  `ZPN720`, `HT1748`, `MLZ106`, `BSA788`. Candidate count lần lượt đổi từ
+  26/18/14/20 thành 24/20/17/17; frame được chọn và confidence cũng có đổi.
+  Chưa chạy lại Condition Enrichment hoặc chấm trên bộ GT lớn; cần đo thêm
+  tác động chất lượng trước khi coi batch tương đương suy luận từng crop.
+- Kiểm thử: `PYTHONPATH=src python -m unittest discover -s tests -q`:
+  **57 tests, OK**; test mới xác nhận ánh xạ thứ tự input/output và lọc class
+  biển số. `python run_plate.py outputs/batch_plate_validation`: **4 event,
+  hoàn thành**. Không thay đổi cấu hình, API, video event/clip hoặc schema.
+
+## Cập nhật 28/09/2026: bỏ tạo ảnh BGR cho frame detector không lấy mẫu
+
+- Vòng đọc raw của lõi Bước 1 trong `src/parking_step1/pipeline.py` giữ nguyên
+  lịch lấy mẫu `frame_index/source_fps`, YOLO26s + ByteTrack và EventEngine.
+  Frame được lấy mẫu vẫn dùng `VideoCapture.read()`; frame bỏ qua dùng
+  `VideoCapture.grab()` để tiến decoder mà không tạo ảnh BGR. Không thêm MOG2,
+  không thay FPS detector hoặc đường xuất clip/OCR/CV–VLM.
+- Benchmark độc lập trên raw 17,395 s/522 frame: cách cũ đọc đủ mọi frame mất
+  **8,014 s**; `grab` cho frame bỏ qua mất **4,045 s**. Hai cách cùng chọn 174
+  frame, cùng frame index/timestamp và ảnh BGR từng frame được lấy mẫu bằng
+  nhau từng byte pixel. Đây là số đo phần đọc/lấy mẫu, không phải tăng tốc toàn
+  pipeline.
+- Run thật đầy đủ với cùng raw, weights, ROI/line và cấu hình enrichment:
+  `outputs/grab_validation/step1-20260927T112003620791Z`. So với
+  `outputs/perf_validation/step1-20260924T074735616078Z`, hai run có cùng
+  174 dòng detection, 4 event, 1 clip; sau khi bỏ metadata thời điểm/run ID,
+  toàn bộ `detections.jsonl`, `events.jsonl`, `clips.jsonl`,
+  `plate_observations.jsonl`, `condition_suggestions.jsonl` bằng nhau. Clip
+  thành phần và `clip_final.mp4` có SHA-256 bằng nhau. `run.json` cùng
+  `decoded_frames=522`, `sampled_frames=174`.
+- Profile đọc frame lõi giảm từ **8,532 s** xuống **4,445 s** trong hai run
+  đầy đủ. Tổng run mới lại mất **1.761,344 s** so với **394,484 s** run cũ:
+  riêng YOLO+ByteTrack 156,196 s so với 60,155 s, OCR 372,953 s so với
+  90,906 s, CV–VLM 1.134,515 s so với 198,250 s. Tải và tốc độ CPU giữa
+  hai lần chạy biến động lớn; không kết luận tối ưu này làm tổng run nhanh hơn
+  trên mọi lần chạy từ một phép so sánh chéo thời điểm. Phần xuất clip không
+  được tối ưu trong thay đổi này.
+- Kiểm thử: `PYTHONPATH=src python -m unittest discover -s tests -q`:
+  **56 tests, OK**; test mới chạy video giả lập 30 FPS ở detector 10 FPS và
+  60 FPS, xác nhận số lần `grab()`, đối chiếu index, timestamp và pixel đầu
+  vào detector với cách đọc trực tiếp. Ví dụ JSON event trong tài liệu parse
+  hợp lệ. `npm run build` trong `frontend`: **đạt**. Backend local đã khởi động
+  lại và `GET /api/runs` trả HTTP 200; các run đã hoàn tất không bị sửa lại.
+  Chưa đo trên các codec/camera khác; `grab()` có thể cho lợi ích
+  khác nhau theo decoder và phần cứng.
+
+## Cập nhật 25/09/2026: chi phí xử lý không tính thời gian nạp model
+
+- Trang Đánh giá, phần 04, hiển thị thời gian phát hiện/cắt clip, OCR,
+  CV–VLM và tổng xử lý/video raw sau khi trừ thời gian nạp detector/model
+  đã ghi trong profile của `runtime.json`. API tính các trường
+  `*_processing_seconds`, `total_processing_seconds` và
+  `processing_to_raw_ratio` từ artifact; không thay đổi pipeline, cách nạp
+  model hay các số wall-clock gốc. Tổng vẫn gồm điều phối và ghi file.
+- Run cũ không có profile nạp model hiện `—` ở metric xử lý tương ứng; nhánh
+  tắt cũng hiện `—`. Không suy đoán chi phí nạp từ run khác.
+- Kiểm thử: `PYTHONPATH=src python -m unittest discover -s tests -q`:
+  **55 tests, OK**; `npm run build` trong `frontend`: **đạt**. Test API kiểm
+  tra cả run cũ thiếu profile và phép trừ ba chặng/tổng/tỷ số của run có
+  profile. Không chạy lại full video vì thay đổi chỉ ở evaluator và UI.
 
 ## Cập nhật 24/09/2026: đo điểm nghẽn và bỏ mã hóa trùng clip final
 

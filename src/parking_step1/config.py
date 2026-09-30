@@ -89,6 +89,12 @@ class RunConfig:
     model: str = "yolo26s.pt"
     image_size: int = 960
     sample_fps: float = 10.0
+    motion_gate_enabled: bool = False
+    motion_gate_width: int = 320
+    motion_gate_min_area_fraction: float = 0.002
+    motion_gate_warmup_seconds: float = 1.0
+    motion_gate_hold_seconds: float = 1.5
+    motion_gate_probe_seconds: float = 0.5
     confidence: float = 0.12
     candidate_hits: int = 2
     min_motion_distance: float = 0.015
@@ -119,6 +125,11 @@ class RunConfig:
             raise ValueError("Cần chọn thư mục đầu ra")
         if self.image_size <= 0 or self.sample_fps <= 0 or not 0 <= self.confidence <= 1:
             raise ValueError("image_size, sample_fps hoặc confidence không hợp lệ")
+        if (self.motion_gate_width < 16 or
+                not 0 < self.motion_gate_min_area_fraction <= 1 or
+                min(self.motion_gate_warmup_seconds, self.motion_gate_hold_seconds) < 0 or
+                self.motion_gate_probe_seconds <= 0):
+            raise ValueError("Cấu hình MOG2 không hợp lệ")
         if not 0 <= self.line_gate_margin <= 1:
             raise ValueError("line_gate_margin phải nằm trong [0,1]")
         if not 0 <= self.min_motion_distance <= 1 or self.motion_window_seconds <= 0:
