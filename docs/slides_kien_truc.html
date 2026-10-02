@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Parking Vision · Kiến trúc và thuật toán</title>
+  <style>
+    :root { color-scheme: dark; --bg:#071a22; --paper:#0c2530; --text:#f5faf8; --muted:#a6c0be; --mint:#6be3b5; --amber:#f5be67; --blue:#86c8ef; }
+    * { box-sizing:border-box; }
+    html,body { margin:0; width:100%; height:100%; background:var(--bg); color:var(--text); font-family: "Segoe UI", Arial, sans-serif; }
+    body { overflow:hidden; }
+    .deck { position:relative; width:100vw; height:100dvh; }
+    .slide { display:none; position:absolute; inset:0; padding:clamp(28px,5vw,78px) clamp(36px,6vw,105px) clamp(66px,7vh,90px); overflow:auto; background:radial-gradient(circle at 80% 14%,#16403f 0,transparent 35%), linear-gradient(135deg,#071a22,#0d2731 68%,#091d27); }
+    .slide.active { display:flex; flex-direction:column; }
+    .eyebrow { color:var(--mint); font-size:clamp(14px,1.4vw,20px); font-weight:700; letter-spacing:.18em; text-transform:uppercase; margin:0 0:14px; }
+    h1 { font-size:clamp(48px,6.8vw,100px); line-height:1.02; letter-spacing:-.055em; margin:0; max-width:1100px; }
+    h2 { font-size:clamp(35px,4.3vw,68px); line-height:1.08; letter-spacing:-.045em; margin:0 0:clamp(25px,4vh,45px); max-width:1200px; }
+    h3 { font-size:clamp(23px,2.25vw,34px); margin:0 0:12px; color:var(--mint); }
+    p,li { font-size:clamp(19px,2vw,30px); line-height:1.38; }
+    p { margin:0; }
+    .lead { color:var(--muted); max-width:1050px; margin-top:28px; font-size:clamp(24px,2.6vw,38px); }
+    .accent { color:var(--mint); }
+    .amber { color:var(--amber); }
+    .muted { color:var(--muted); }
+    .rule { width:100%; height:1px; background:#3c6468; margin:20px 0 28px; }
+    .cols { display:grid; grid-template-columns:1fr 1fr; gap:clamp(28px,4.5vw,72px); align-items:start; }
+    .three { display:grid; grid-template-columns:repeat(3,1fr); gap:30px; }
+    .plain { margin:0; padding-left:1.1em; }
+    .plain li { margin:0 0:18px; padding-left:8px; }
+    .plain li::marker { color:var(--mint); }
+    .statement { font-size:clamp(29px,3.3vw,50px); max-width:1150px; line-height:1.2; letter-spacing:-.035em; }
+    .flow { display:flex; align-items:stretch; gap:12px; flex-wrap:wrap; margin-top:26px; }
+    .flow .node { min-width:140px; flex:1 1 0; padding:20px 14px; border-top:3px solid var(--mint); background:#ffffff0a; font-size:clamp(17px,1.65vw,25px); line-height:1.2; }
+    .flow .node strong { display:block; color:var(--text); }
+    .flow .node small { display:block; color:var(--muted); font-size:.72em; margin-top:9px; line-height:1.3; }
+    .flow .arrow { align-self:center; color:var(--mint); font-size:30px; }
+    .lane { display:flex; align-items:center; gap:20px; border-bottom:1px solid #31535c; padding:17px 0; font-size:clamp(19px,2vw,30px); }
+    .lane b { color:var(--mint); min-width:175px; }
+    .lane span { color:var(--muted); }
+    .number { display:block; font-size:clamp(56px,7vw,110px); font-weight:800; line-height:1; color:var(--mint); letter-spacing:-.06em; }
+    .algorithm { display:grid; grid-template-columns:repeat(2,1fr); gap:32px 58px; }
+    .algorithm div { border-top:2px solid #5e8586; padding-top:16px; }
+    .algorithm b { display:block; color:var(--mint); font-size:clamp(22px,2.3vw,34px); margin-bottom:8px; }
+    .algorithm span { color:var(--muted); font-size:clamp(18px,1.8vw,27px); line-height:1.35; }
+    .metric { font-size:clamp(20px,2vw,28px); color:var(--muted); margin-top:auto; padding-top:22px; }
+    .callout { margin-top:auto; border-left:4px solid var(--amber); padding:11px 0 11px 26px; color:var(--muted); font-size:clamp(19px,1.9vw,27px); max-width:1110px; }
+    .visual { background:#ffffff08; padding:28px 34px; border:1px solid #45696a; }
+    .bar { height:37px; margin:25px 0 12px; display:flex; overflow:hidden; border-radius:4px; background:#40606a; }
+    .bar .keep { background:var(--mint); width:26%; }
+    .bar .drop { flex:1; background:repeating-linear-gradient(45deg,#33515a,#33515a 12px,#395962 12px,#395962 24px); }
+    .bar .keep.two { width:23%; }
+    .legend { display:flex; justify-content:space-between; font-size:clamp(15px,1.5vw,22px); color:var(--muted); }
+    .footer { position:absolute; bottom:25px; left:clamp(36px,6vw,105px); right:145px; display:flex; align-items:center; justify-content:space-between; font-size:15px; letter-spacing:.06em; color:#89aaa9; pointer-events:none; }
+    .controls { position:fixed; right:27px; bottom:24px; display:flex; gap:8px; z-index:10; }
+    button { border:1px solid #6b9794; color:var(--text); background:#123039; width:48px; height:42px; cursor:pointer; font:24px "Segoe UI",sans-serif; }
+    button:hover,button:focus-visible { background:#246655; outline:2px solid var(--mint); }
+    .progress { position:fixed; left:0; bottom:0; height:4px; width:0; background:var(--mint); z-index:20; transition:width .2s; }
+    .pair { display:grid; grid-template-columns:1fr 1fr; gap:45px; margin-top:14px; }
+    .pair > div { border-top:3px solid var(--mint); padding-top:18px; }
+    .pair p { color:var(--muted); }
+    .steps { display:grid; grid-template-columns:repeat(4,1fr); gap:22px; margin-top:10px; }
+    .steps > div { border-top:3px solid var(--mint); padding-top:18px; }
+    .steps b { display:block; color:var(--mint); font-size:clamp(22px,2vw,30px); margin-bottom:10px; }
+    .steps p { color:var(--muted); font-size:clamp(18px,1.7vw,25px); }
+    .formula { font-size:clamp(22px,2.2vw,33px); color:var(--text); margin-top:32px; }
+    @media (max-height:820px) and (min-width:761px) { .slide { padding-top:28px; padding-bottom:80px; } h2 { font-size:clamp(34px,3.5vw,50px); margin-bottom:22px; } h3 { font-size:clamp(22px,2vw,29px); } p,li { font-size:clamp(18px,1.7vw,24px); } .eyebrow { margin-bottom:9px; } .lead { font-size:clamp(23px,2.1vw,30px); margin-top:15px; } .statement { font-size:clamp(29px,2.9vw,40px); } .callout { font-size:clamp(18px,1.6vw,23px); padding-top:5px; padding-bottom:5px; } .rule { margin:14px 0 18px; } .flow .node { padding:14px 11px; } .algorithm { gap:20px 40px; } .algorithm div { padding-top:9px; } .algorithm span { font-size:clamp(17px,1.6vw,22px); } .steps { gap:16px; } .steps > div { padding-top:10px; } .steps p { font-size:clamp(17px,1.5vw,21px); } .number { font-size:64px; } }
+    @media (max-width:760px) { .slide { padding:30px 26px 75px; } .cols,.three,.algorithm,.pair { grid-template-columns:1fr; gap:22px; } .flow { gap:5px; } .flow .node { flex:1 1 42%; } .flow .arrow { display:none; } .footer { left:26px; right:125px; } .controls { right:12px; } }
+    @media (max-width:760px) { .steps { grid-template-columns:1fr 1fr; gap:16px; } }
+    @media print { html,body,.deck { height:auto; overflow:visible; background:white; } .slide,.slide.active { display:flex; position:relative; width:100%; height:100vh; page-break-after:always; print-color-adjust:exact; -webkit-print-color-adjust:exact; } .controls,.progress { display:none; } }
+  </style>
+</head>
+<body>
+  <main class="deck" aria-label="Slide kiến trúc Parking Vision">
+    <section class="slide active" aria-label="Slide 1">
+      <p class="eyebrow">Parking Vision / Kiến trúc hiện tại</p>
+      <h1>Video bãi xe<br><span class="accent">từ raw đến GT đã duyệt</span></h1>
+      <p class="lead">Phát hiện lượt xe qua làn, giữ đúng đoạn video, gợi ý biển số và điều kiện đọc biển để người vận hành kiểm tra.</p>
+      <p class="metric">Pilot: một camera cho mỗi làn · car / motorcycle / bicycle</p>
+      <div class="footer"><span>KIẾN TRÚC & THUẬT TOÁN</span><span class="page"></span></div>
+    </section>
+
+    <section class="slide" aria-label="Slide 2">
+      <p class="eyebrow">01 / Bài toán</p>
+      <h2>Một event là một lượt xe</h2>
+      <div class="cols">
+        <div>
+          <p class="statement">Mỗi camera gắn với <span class="accent">một làn</span> và chiều cố định <span class="amber">ENTRY hoặc EXIT</span>.</p>
+          <div class="rule"></div>
+          <p class="muted">Xe có thể vào bằng bất kỳ làn vào và ra bằng bất kỳ làn ra. Bước hiện tại xử lý từng camera độc lập.</p>
+        </div>
+        <div>
+          <div class="lane"><b>Raw video</b><span>Nguồn thời gian bất biến</span></div>
+          <div class="lane"><b>Event</b><span>Một lượt xe và track tương ứng</span></div>
+          <div class="lane"><b>Clip</b><span>Khoảng video giữ lại, có thể chứa nhiều event</span></div>
+        </div>
+      </div>
+      <p class="callout">Ghép lượt vào–ra giữa các camera thuộc module tiếp theo. Pipeline này chưa thực hiện.</p>
+      <div class="footer"><span>NGỮ CẢNH DỮ LIỆU</span><span class="page"></span></div>
+    </section>
+
+    <section class="slide" aria-label="Slide 3">
+      <p class="eyebrow">02 / Luồng xử lý</p>
+      <h2>Từ frame raw đến kết quả kiểm duyệt</h2>
+      <div class="flow">
+        <div class="node"><strong>Video raw</strong><small>Frame + timestamp gốc</small></div><span class="arrow">›</span>
+        <div class="node"><strong>MOG2</strong><small>Tùy chọn, lọc frame yên</small></div><span class="arrow">›</span>
+        <div class="node"><strong>YOLO26s</strong><small>Detect 3 lớp xe</small></div><span class="arrow">›</span>
+        <div class="node"><strong>ByteTrack</strong><small>Nối box qua frame</small></div><span class="arrow">›</span>
+        <div class="node"><strong>EventEngine</strong><small>Tạo event + clip</small></div>
+      </div>
+      <div class="flow" style="margin-top:30px">
+        <div class="node"><strong>YOLO biển + OCR</strong><small>Gợi ý plate_text</small></div><span class="arrow">›</span>
+        <div class="node"><strong>CV + Qwen3-VL</strong><small>Gợi ý điều kiện</small></div><span class="arrow">›</span>
+        <div class="node"><strong>Web HITL</strong><small>Người duyệt GT</small></div><span class="arrow">›</span>
+        <div class="node"><strong>Đánh giá</strong><small>So gợi ý với GT</small></div>
+      </div>
+      <p class="callout">OCR và CV–VLM chạy sau khi lõi bước 1 tạo xong event. Các nhánh hiện xử lý tuần tự.</p>
+      <div class="footer"><span>PIPELINE ĐANG TRIỂN KHAI</span><span class="page"></span></div>
+    </section>
+
+    <section class="slide" aria-label="Slide 4">
+      <p class="eyebrow">03 / Bộ lọc tốc độ</p>
+      <h2>MOG2 giảm số lần gọi YOLO khi cảnh yên</h2>
+      <div class="cols">
+        <div>
+          <p class="statement">MOG2 nhìn ảnh thu nhỏ trong ROI để nhận biết <span class="accent">chuyển động nền trước</span>.</p>
+          <p class="lead">Khi cảnh yên, không có track mở và chưa tới lần dò định kỳ, pipeline bỏ qua YOLO ở frame đó.</p>
+        </div>
+        <div class="visual">
+          <p class="muted">Video tĩnh thử nghiệm: 200 frame</p>
+          <div class="bar"><div class="keep"></div><div class="drop"></div></div>
+          <div class="legend"><span>52 frame gọi YOLO</span><span>148 frame bỏ qua</span></div>
+          <div class="rule"></div>
+          <p>Detector: <span class="amber">33,19 s</span> trước gate → <span class="accent">8,76 s</span> sau gate</p>
+        </div>
+      </div>
+      <p class="callout">Mặc định tắt. Gate vẫn giữ warmup, hold, probe và gọi YOLO khi event đang mở. Video có xe liên tục có thể không tiết kiệm thời gian.</p>
+      <div class="footer"><span>THUẬT TOÁN TÙY CHỌN</span><span class="page"></span></div>
+    </section>
+
+    <section class="slide" aria-label="Slide 5">
+      <p class="eyebrow">04 / Phát hiện lượt xe</p>
+      <h2>YOLO + ByteTrack + EventEngine</h2>
+      <div class="algorithm">
+        <div><b>01 · YOLO26s</b><span>Phát hiện car, motorcycle, bicycle trên frame đã lấy mẫu. Detector FPS không đổi FPS của clip giao bước sau.</span></div>
+        <div><b>02 · ByteTrack</b><span>Gán track_id để nối các box của cùng xe qua nhiều frame trong một run/camera.</span></div>
+        <div><b>03 · ROI / crossing line</b><span>Lọc xe theo vùng quan sát. Line xác nhận xe đã đi qua. Không vẽ line vẫn cần bằng chứng xe di chuyển.</span></div>
+        <div><b>04 · State machine</b><span>Candidate cần đủ lần xuất hiện và khoảng di chuyển. Active duy trì qua hụt track ngắn rồi đóng theo grace.</span></div>
+      </div>
+      <p class="callout">Mục tiêu là giữ recall lượt xe. Track ID chỉ có ý nghĩa nội bộ run, không phải danh tính xe lâu dài.</p>
+      <div class="footer"><span>LÕI BƯỚC 1</span><span class="page"></span></div>
+    </section>
+
+    <section class="slide" aria-label="Slide bắt event 1">
+      <p class="eyebrow">05 / Bắt event · lọc và xác nhận</p>
+      <h2>Một track chỉ thành event khi xe thực sự di chuyển</h2>
+      <div class="steps">
+        <div><b>1. Điểm neo</b><p>Lấy điểm giữa đáy box của xe, giữ lại detection có điểm neo nằm trong ROI.</p></div>
+        <div><b>2. Cổng line</b><p>Nếu có line, track mới phải ở gần đoạn line. Track đã mở được tiếp tục khi rời corridor.</p></div>
+        <div><b>3. Candidate</b><p>Mỗi track_id mới mở một candidate, lưu frame đầu, thời gian và điểm neo ban đầu.</p></div>
+        <div><b>4. Active</b><p>Cần ít nhất <strong>2 lần thấy</strong> và điểm neo dịch chuyển tối thiểu <strong>0,015</strong> theo frame chuẩn hóa.</p></div>
+      </div>
+      <p class="formula">Khoảng di chuyển = √[(Δx / rộng frame)² + (Δy / cao frame)²]</p>
+      <p class="callout">Cửa sổ xác nhận mặc định 1,5 giây. Candidate đứng yên quá cửa sổ sẽ lấy mốc mới, tránh mở event từ lúc xe còn đỗ.</p>
+      <div class="footer"><span>EVENTENGINE · CANDIDATE → ACTIVE</span><span class="page"></span></div>
+    </section>
+
+    <section class="slide" aria-label="Slide bắt event 2">
+      <p class="eyebrow">06 / Bắt event · qua line và đóng</p>
+      <h2>Track tiếp tục sống đến khi hết grace</h2>
+      <div class="steps">
+        <div><b>ACTIVE</b><p>Mỗi detection cùng track cập nhật end_ms, box và điểm confidence. Xe ra khỏi corridor vẫn được theo dõi.</p></div>
+        <div><b>CROSSED</b><p>Khi điểm neo đổi phía so với crossing line, gắn crossed=true và crossing_ms. Nếu xảy ra khi còn candidate, lưu lại chờ xác nhận chuyển động.</p></div>
+        <div><b>LEAVING</b><p>Mất detection thì giữ event mở trong grace mặc định 1,5 giây để nối đoạn hụt track ngắn.</p></div>
+        <div><b>CLOSED</b><p>Hết grace thì đóng event ở lần thấy cuối. Candidate chưa đủ chuyển động bị loại, không tạo event đầu ra.</p></div>
+      </div>
+      <p class="statement" style="margin-top:38px">Mỗi <span class="accent">track_id</span> có state riêng. <span class="amber">crossed</span> là thuộc tính event, không tự tạo thêm event mới.</p>
+      <p class="callout">Event giữ start_ms từ candidate hợp lệ và end_ms ở frame cuối thấy xe. Buffer trước/sau chỉ được thêm ở bước lập clip.</p>
+      <div class="footer"><span>EVENTENGINE · ACTIVE → LEAVING → CLOSED</span><span class="page"></span></div>
+    </section>
+
+    <section class="slide" aria-label="Slide 6">
+      <p class="eyebrow">07 / Video đầu ra</p>
+      <h2>Event quyết định khoảng cần giữ</h2>
+      <div class="cols">
+        <div>
+          <p class="statement">Mở rộng thời gian event bằng <span class="accent">buffer trước / sau</span>, rồi gộp các khoảng gần hoặc chồng nhau.</p>
+          <div class="rule"></div>
+          <p class="muted">Xuất clip vật lý MP4 khi cần, hoặc giữ virtual segment. Nhiều clip được ghép theo thứ tự thời gian thành <strong>clip_final.mp4</strong>.</p>
+        </div>
+        <div class="visual">
+          <p>Timeline raw</p>
+          <div class="bar"><div class="drop" style="flex:0 0 16%"></div><div class="keep"></div><div class="drop" style="flex:0 0 25%"></div><div class="keep two"></div><div class="drop"></div></div>
+          <div class="legend"><span>Clip 1</span><span>Khoảng bỏ qua</span><span>Clip 2</span></div>
+          <div class="rule"></div>
+          <p class="muted">Manifest lưu ánh xạ timeline clip ↔ raw để tua lại đúng event.</p>
+        </div>
+      </div>
+      <p class="callout">Một clip có thể chứa nhiều event. clip_final nối các đoạn cần giữ, không đồng nghĩa toàn bộ raw.</p>
+      <div class="footer"><span>SEGMENT & MANIFEST</span><span class="page"></span></div>
+    </section>
+
+    <section class="slide" aria-label="Slide 7">
+      <p class="eyebrow">08 / Gợi ý biển số</p>
+      <h2>Chỉ tìm biển trong box xe của event</h2>
+      <div class="flow">
+        <div class="node"><strong>Crop xe</strong><small>Đúng track và thời gian event</small></div><span class="arrow">›</span>
+        <div class="node"><strong>YOLO biển</strong><small>yolov8n-oiv7.pt</small></div><span class="arrow">›</span>
+        <div class="node"><strong>Chọn frame</strong><small>Confidence + chất lượng ảnh + khoảng cách thời gian</small></div><span class="arrow">›</span>
+        <div class="node"><strong>PaddleOCR</strong><small>Nhận chữ trên crop biển</small></div><span class="arrow">›</span>
+        <div class="node"><strong>Consensus</strong><small>Gộp chuỗi qua frame</small></div>
+      </div>
+      <p class="statement" style="margin-top:55px">Kết quả là <span class="accent">gợi ý plate_text</span>. Người duyệt có thể sửa trước khi lưu GT.</p>
+      <p class="callout">Bicycle vẫn tạo event/clip nhưng nhánh biển số và điều kiện ghi not_applicable.</p>
+      <div class="footer"><span>PLATE ENRICHMENT TÙY CHỌN</span><span class="page"></span></div>
+    </section>
+
+    <section class="slide" aria-label="Slide 8">
+      <p class="eyebrow">09 / Gợi ý điều kiện</p>
+      <h2>CV đo tín hiệu, VLM nhìn ngữ cảnh</h2>
+      <div class="pair">
+        <div><h3>CV</h3><p>Đo ánh sáng và độ nét ở crop xe/biển. Kết quả là bằng chứng định lượng, không tự kết luận nguyên nhân.</p></div>
+        <div><h3>Qwen3-VL-2B</h3><p>Nhìn contact sheet gồm cảnh, xe và biển trên tối đa 3 frame/event theo mặc định.</p></div>
+      </div>
+      <div class="rule"></div>
+      <p class="statement">Biển <span class="accent">đọc được</span>: <strong>good</strong>.<br>Nếu không: <span class="amber">capture_blur</span>, <span class="amber">plate_obstruction</span> hoặc <span class="amber">lighting_issue</span>.</p>
+      <p class="callout">Fusion kết hợp OCR/CV/VLM và quy tắc lọc. Người duyệt xác nhận kết quả cuối.</p>
+      <div class="footer"><span>CONDITION ENRICHMENT TÙY CHỌN</span><span class="page"></span></div>
+    </section>
+
+    <section class="slide" aria-label="Slide 9">
+      <p class="eyebrow">10 / Kiểm duyệt và đánh giá</p>
+      <h2>GT cuối cùng do người duyệt quyết định</h2>
+      <div class="three">
+        <div><span class="number">1</span><h3>Kiểm tra</h3><p class="muted">Xem raw và overlay. Sửa event, loại xe, biển số, khả năng đọc và điều kiện. Thêm lượt bị bỏ sót hoặc xóa event sai.</p></div>
+        <div><span class="number">2</span><h3>Duyệt</h3><p class="muted">Lưu GT đã duyệt tách khỏi artifact gợi ý của model. Raw và dự đoán gốc vẫn truy vết được.</p></div>
+        <div><span class="number">3</span><h3>Đo</h3><p class="muted">Đánh giá event/clip trước, rồi OCR, CV–VLM. Cuối cùng xem thời gian xử lý theo từng chặng.</p></div>
+      </div>
+      <p class="callout">GT độc lập phải bao gồm xe model bỏ sót. Chưa đưa GT vào input của pipeline hoặc Model 2.</p>
+      <div class="footer"><span>HUMAN IN THE LOOP</span><span class="page"></span></div>
+    </section>
+
+    <section class="slide" aria-label="Slide 10">
+      <p class="eyebrow">11 / Ranh giới hiện tại</p>
+      <h2>Đã có nền tảng để đánh giá từng nhánh</h2>
+      <div class="cols">
+        <div><h3>Đang chạy</h3><ul class="plain"><li>Web local: BE FastAPI, FE React, worker cho nhiều run.</li><li>Artifact event, clip, detection, OCR, điều kiện và runtime.</li><li>HITL review, xuất Excel, metric so với GT đã duyệt.</li></ul></div>
+        <div><h3>Chưa thuộc pipeline này</h3><ul class="plain"><li>Ghép lượt ENTRY với EXIT giữa các camera.</li><li>Model 2 của bên dev và đánh giá nhận diện đầu cuối.</li><li>Bảo đảm MOG2 giữ recall trên mọi camera khi bật.</li></ul></div>
+      </div>
+      <p class="callout">Quy tắc triển khai: giữ raw và timeline làm chuẩn. Mỗi gợi ý đều có nguồn và có thể kiểm tra lại.</p>
+      <div class="footer"><span>PARKING VISION · 30/09/2026</span><span class="page"></span></div>
+    </section>
+  </main>
+  <div class="controls" aria-label="Điều khiển slide"><button id="prev" aria-label="Slide trước">‹</button><button id="next" aria-label="Slide sau">›</button></div>
+  <div class="progress" aria-hidden="true"></div>
+  <script>
+    const slides = [...document.querySelectorAll('.slide')];
+    const pages = document.querySelectorAll('.page');
+    let current = 0;
+    function show(index) {
+      current = Math.max(0, Math.min(slides.length - 1, index));
+      slides.forEach((slide, i) => { slide.classList.toggle('active', i === current); slide.setAttribute('aria-hidden', String(i !== current)); });
+      pages.forEach((page, i) => { page.textContent = `${String(i + 1).padStart(2, '0')} / ${String(slides.length).padStart(2, '0')}`; });
+      document.querySelector('.progress').style.width = `${((current + 1) / slides.length) * 100}%`;
+      location.hash = `slide-${current + 1}`;
+    }
+    document.getElementById('prev').addEventListener('click', () => show(current - 1));
+    document.getElementById('next').addEventListener('click', () => show(current + 1));
+    addEventListener('keydown', e => { if (['ArrowRight', 'PageDown', ' '].includes(e.key)) { e.preventDefault(); show(current + 1); } if (['ArrowLeft', 'PageUp'].includes(e.key)) { e.preventDefault(); show(current - 1); } if (e.key === 'Home') show(0); if (e.key === 'End') show(slides.length - 1); });
+    const initial = Number(location.hash.match(/^#slide-(\d+)$/)?.[1] || 1) - 1;
+    show(initial);
+  </script>
+</body>
+</html>

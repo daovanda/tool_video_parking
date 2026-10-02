@@ -4,6 +4,9 @@ Bản pilot hiện xử lý **một camera/một làn trong mỗi lần chạy**
 `car`, `motorcycle` và `bicycle`. `lane_id` và `direction` (`ENTRY` hoặc `EXIT`) được
 nhập từ camera registry; Bước 1 không ghép lượt vào với lượt ra.
 
+[Slide HTML trình bày kiến trúc và thuật toán](docs/slides_kien_truc.html)
+có thể mở trực tiếp trong trình duyệt và dùng phím trái/phải để chuyển slide.
+
 ## Chuẩn bị máy mới (Windows PowerShell)
 
 Cần **Python 3.12**, **Node.js 22**, Git, kết nối mạng khi cài thư viện và tải
@@ -42,12 +45,15 @@ trong cấu hình run. Model OCR Latin được Paddle tải/cache ở lần dù
 
 ## Model và video trên máy mới
 
-Repository chỉ chứa **mã nguồn, frontend, test, cấu hình mẫu và tài liệu**.
-Video raw, output của các run, database local, weights/model và file debug
-không được đưa lên GitHub. Sau khi clone:
+Repository chứa mã nguồn, frontend, test, cấu hình mẫu, tài liệu và **một
+video mẫu** [`video_test1.mp4`](video_test1.mp4) (17,39 giây; khoảng 48 MB)
+để thử Bước 1 ngay sau khi clone. Video raw khác, output của các run,
+database local, weights/model và file debug không được đưa lên GitHub. Sau
+khi clone:
 
-- Đặt video của bạn ở đường dẫn riêng hoặc tải lên qua trang **Kho video**.
-  Nếu chạy ví dụ CLI bên dưới, thay `video_test1.mp4` bằng đường dẫn video thật.
+- Dùng `video_test1.mp4` cho lệnh CLI ví dụ bên dưới, hoặc tải file này lên
+  trang **Kho video** để thử web. Với camera khác, đặt video ở đường dẫn riêng
+  hoặc tải lên Kho video rồi thay `--source`/chọn lại video tương ứng.
 - Tải weights mặc định vào root (cần mạng ở lần đầu):
 
   ```powershell

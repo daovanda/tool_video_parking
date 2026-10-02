@@ -1,7 +1,34 @@
 # Trạng thái triển khai
 
-Ngày cập nhật: **30/09/2026** — phạm vi: pilot Bước 1, chạy offline từng
+Ngày cập nhật: **02/10/2026** — phạm vi: pilot Bước 1, chạy offline từng
 camera/làn.
+
+## Cập nhật 02/10/2026: video mẫu trong repository
+
+- `video_test1.mp4` ở root được theo dõi trong Git qua ngoại lệ tường minh
+  của `.gitignore`; chỉ file MP4 này được chia sẻ cùng mã nguồn. README hướng
+  dẫn dùng file với CLI hoặc tải lên Kho video. Các raw video khác, model,
+  output và dữ liệu web local vẫn không đưa vào repository. Không đổi kiến
+  trúc, pipeline, schema hay cấu hình mặc định.
+- Xác minh `cv2.VideoCapture('video_test1.mp4')`: **decode frame đầu và cuối được**,
+  522 frame, khoảng 30,008 FPS, độ phân giải 3060×1664, thời lượng khoảng
+  17,395 giây. SHA-256:
+  `05c314961ac3b259ac278f72e8e505e59450954f7b155d41e1cb17b95a30cdc2`.
+
+## Cập nhật 30/09/2026: slide HTML kiến trúc và thuật toán
+
+- `docs/slides_kien_truc.html` là bộ 12 slide tự chứa để trình bày luồng đang
+  chạy: dữ liệu camera/làn, MOG2 tùy chọn, YOLO26s + ByteTrack + EventEngine,
+  cách chọn điểm neo, cổng ROI/line, xác nhận candidate, crossed, grace,
+  clip/manifest, OCR, CV–VLM, HITL và ranh giới chưa triển khai. README dẫn
+  trực tiếp tới file; mở trong trình duyệt, dùng phím trái/phải hoặc nút ở
+  góc dưới. Nội dung hiển thị không dùng dấu chấm phẩy. File trình bày không
+  thay đổi pipeline hay schema.
+- Xác minh bằng Edge headless qua Playwright ở viewport 1440×900, 1280×720
+  và 1024×768: đủ 12 slide, mỗi slide không tràn chiều cao và phím ArrowRight
+  chuyển từ slide 1 sang 2. Đã xem ảnh render các slide kiến trúc, MOG2,
+  EventEngine, OCR, CV–VLM và HITL; không thấy nội dung bị che. Chưa kiểm tra
+  bản in/PDF trên từng máy.
 
 ## Cập nhật 30/09/2026: chuẩn bị chạy trên máy khác và sửa truyền cấu hình MOG2
 

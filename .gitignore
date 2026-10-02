@@ -9,6 +9,7 @@ __pycache__/
 .pytest_cache/
 frame_preview.jpg
 *.mp4
+!video_test1.mp4
 *.avi
 *.mov
 *.mkv
